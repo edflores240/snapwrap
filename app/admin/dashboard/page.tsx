@@ -17,21 +17,23 @@ export default function AdminDashboard() {
 
     const fetchData = async () => {
         try {
-            // 1. Counts
-            const { count: eventsCount } = await supabase.from('events').select('*', { count: 'exact', head: true });
-            const { count: photosCount } = await supabase.from('photos').select('*', { count: 'exact', head: true });
-
-            // 2. Recent Activity (Photos)
-            const { data: activity } = await supabase
-                .from('photos')
-                .select('id, created_at, final_url, image_url, events(name)')
-                .order('created_at', { ascending: false })
-                .limit(5);
+            const [
+                { count: eventsCount },
+                { count: photosCount },
+                { data: activity }
+            ] = await Promise.all([
+                supabase.from('events').select('*', { count: 'exact', head: true }),
+                supabase.from('photos').select('*', { count: 'exact', head: true }),
+                supabase.from('photos')
+                    .select('id, created_at, final_url, image_url, events(name)')
+                    .order('created_at', { ascending: false })
+                    .limit(5)
+            ]);
 
             setStats({
                 events: eventsCount || 0,
                 photos: photosCount || 0,
-                storage: `${((photosCount || 0) * 2.5).toFixed(1)} MB`, // Est. 2.5MB per photo
+                storage: `${((photosCount || 0) * 0.8).toFixed(1)} MB`, // Updated est. to 0.8MB (compressed)
             });
             setRecentPhotos(activity || []);
         } catch (error) {

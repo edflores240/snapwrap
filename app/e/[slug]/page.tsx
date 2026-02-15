@@ -17,7 +17,7 @@ interface Event {
     config: any;
 }
 
-type BoothStep = 'welcome' | 'select-template' | 'capture' | 'review' | 'qr' | 'done';
+type BoothStep = 'welcome' | 'select-template' | 'mirror' | 'capture' | 'review' | 'qr' | 'done';
 
 interface BoothSettings {
     welcomeMessage: string;
@@ -87,6 +87,39 @@ export default function PublicBoothPage() {
     const themeShadow = `0 10px 40px ${tc}40`;
     const themeBgSubtle = `linear-gradient(135deg, hsl(${hsl.h}, ${hsl.s}%, 8%) 0%, #030712 50%, hsl(${(hsl.h + 30) % 360}, ${Math.max(hsl.s - 20, 10)}%, 10%) 100%)`;
 
+    // Camera Selection State
+    const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+    const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+
+    // Load Devices
+    useEffect(() => {
+        const getDevices = async () => {
+            try {
+                await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission
+                const allDevices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = allDevices.filter(device => device.kind === 'videoinput');
+                setDevices(videoDevices);
+
+                // Load saved or default
+                const savedId = localStorage.getItem('cameraInfo.deviceId');
+                if (savedId && videoDevices.find(d => d.deviceId === savedId)) {
+                    setSelectedDeviceId(savedId);
+                } else if (videoDevices.length > 0) {
+                    setSelectedDeviceId(videoDevices[0].deviceId);
+                }
+            } catch (err) {
+                console.error('Error listing devices:', err);
+            }
+        };
+        getDevices();
+    }, []);
+
+    const handleDeviceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const newId = e.target.value;
+        setSelectedDeviceId(newId);
+        localStorage.setItem('cameraInfo.deviceId', newId);
+    };
+
     useEffect(() => {
         if (params.slug) fetchEvent();
         return () => { stopCamera(); };
@@ -133,10 +166,19 @@ export default function PublicBoothPage() {
 
     const startCamera = async () => {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+            stopCamera(); // Ensure previous stream stops
+
+            const constraints: MediaStreamConstraints = {
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+                    facingMode: selectedDeviceId ? undefined : 'user'
+                },
                 audio: false,
-            });
+            };
+
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             streamRef.current = stream;
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
@@ -146,6 +188,20 @@ export default function PublicBoothPage() {
             alert('Could not access camera. Please allow camera permissions.');
         }
     };
+
+    // Restart camera when device changes
+    useEffect(() => {
+        if ((step === 'mirror' || step === 'capture') && selectedDeviceId) {
+            startCamera();
+        }
+    }, [selectedDeviceId]);
+
+    // Re-attach stream when step changes (because video element remounts)
+    useEffect(() => {
+        if ((step === 'mirror' || step === 'capture') && videoRef.current && streamRef.current) {
+            videoRef.current.srcObject = streamRef.current;
+        }
+    }, [step]);
 
     const stopCamera = () => {
         streamRef.current?.getTracks().forEach(t => t.stop());
@@ -226,13 +282,19 @@ export default function PublicBoothPage() {
         setSelectedTemplate(tpl);
         setCapturedPhotos([]);
         setCurrentSlotIndex(0);
-        setStep('capture');
+
+        // Go to Mirror Step first!
+        setStep('mirror');
         await startCamera();
+    };
+
+    const handleMirrorReady = () => {
+        setStep('capture');
         // Auto-snap if enabled, otherwise wait for manual capture
-        if (boothSettings.autoSnap !== false) {
+        if (boothSettings.autoSnap !== false && selectedTemplate) {
             setTimeout(() => {
-                runAutoSnap(tpl);
-            }, 1000);
+                runAutoSnap(selectedTemplate);
+            }, 500);
         }
     };
 
@@ -648,6 +710,62 @@ export default function PublicBoothPage() {
                         <div className="text-center mt-8">
                             <button onClick={() => setStep('welcome')} className="text-gray-500 hover:text-white transition-colors text-sm">
                                 ← Back
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* ── STEP: Mirror (Preparation) ────────────────────────── */}
+                {step === 'mirror' && (
+                    <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 animate-slideUp">
+                        <div className="w-full max-w-2xl text-center mb-6">
+                            <h2 className="text-3xl font-bold mb-2">Get Ready! ✨</h2>
+                            <p className="text-gray-400">Check your look and select your camera</p>
+                        </div>
+
+                        <div className="relative w-full max-w-2xl aspect-video rounded-2xl overflow-hidden bg-black border-2 border-white/10 shadow-2xl">
+                            <video
+                                ref={videoRef}
+                                autoPlay
+                                playsInline
+                                muted
+                                className="w-full h-full object-cover transform scale-x-[-1]"
+                            />
+
+                            {/* Camera Switcher */}
+                            {devices.length > 0 && (
+                                <div className="absolute top-4 right-4 z-20">
+                                    <select
+                                        className="bg-black/50 backdrop-blur-md border border-white/20 rounded-full px-4 py-2 text-sm text-white focus:outline-none hover:bg-black/70 cursor-pointer appearance-none text-center"
+                                        value={selectedDeviceId}
+                                        onChange={handleDeviceChange}
+                                        title="Switch Camera"
+                                    >
+                                        {devices.map((d, i) => (
+                                            <option key={d.deviceId} value={d.deviceId} className="bg-gray-900">
+                                                {d.label || `Camera ${i + 1}`}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="mt-8 flex gap-4">
+                            <button
+                                onClick={() => { setStep('select-template'); stopCamera(); }}
+                                className="px-6 py-3 rounded-xl border border-white/20 text-gray-400 hover:text-white hover:bg-white/10 transition-all text-sm"
+                            >
+                                ← Back
+                            </button>
+
+                            <button
+                                onClick={handleMirrorReady}
+                                className="px-12 py-5 rounded-full text-white font-bold text-xl shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-3"
+                                style={{ background: themeGradient, boxShadow: themeShadow }}
+                            >
+                                <span>I'M READY!</span>
+                                <span className="text-2xl">📸</span>
                             </button>
                         </div>
                     </div>
