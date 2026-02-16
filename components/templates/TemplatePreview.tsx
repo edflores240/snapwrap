@@ -97,22 +97,43 @@ export default function TemplatePreview({
                 </div>
             ))}
 
+            {/* Stickers */}
+            {
+                (tpl.stickers || []).map((stk) => (
+                    <div
+                        key={stk.id}
+                        className="absolute pointer-events-none"
+                        style={{
+                            left: `${stk.x}%`,
+                            top: `${stk.y}%`,
+                            width: stk.width * scale,
+                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
+                            zIndex: 15, // Above photos (implicit z=0) and below text if desired? Let's put text above stickers usually.
+                        }}
+                    >
+                        <img src={stk.src} alt="sticker" className="w-full h-auto drop-shadow-md" />
+                    </div>
+                ))
+            }
+
             {/* Watermark */}
-            {tpl.watermarkText && (
-                <div
-                    className="absolute bottom-1 left-0 right-0 text-center pointer-events-none"
-                    style={{
-                        fontSize: Math.max(10 * scale, 5),
-                        opacity: 0.3,
-                        letterSpacing: 2 * scale,
-                        textTransform: 'uppercase',
-                        color: tpl.background.includes('linear') || tpl.background.startsWith('#1') || tpl.background.startsWith('#0')
-                            ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.4)',
-                    }}
-                >
-                    {tpl.watermarkText}
-                </div>
-            )}
-        </div>
+            {
+                tpl.watermarkText && (
+                    <div
+                        className="absolute bottom-1 left-0 right-0 text-center pointer-events-none"
+                        style={{
+                            fontSize: Math.max(10 * scale, 5),
+                            opacity: 0.3,
+                            letterSpacing: 2 * scale,
+                            textTransform: 'uppercase',
+                            color: tpl.background.includes('linear') || tpl.background.startsWith('#1') || tpl.background.startsWith('#0')
+                                ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.4)',
+                        }}
+                    >
+                        {tpl.watermarkText}
+                    </div>
+                )
+            }
+        </div >
     );
 }

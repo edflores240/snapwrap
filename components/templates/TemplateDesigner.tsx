@@ -5,6 +5,15 @@ import { Button } from '@/components/ui/Button';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+interface Sticker {
+    id: string;
+    src: string;
+    x: number;    // percent 0-100
+    y: number;    // percent 0-100
+    width: number; // px (relative to base 420 width)
+    rotation: number;
+}
+
 interface TextElement {
     id: string;
     text: string;
@@ -41,6 +50,7 @@ export interface TemplateConfig {
     gap: number;
     padding: number;
     textElements: TextElement[];
+    stickers?: Sticker[];
     watermarkText: string;
 }
 
@@ -367,7 +377,7 @@ function createBlankTemplate(rows: number, cols: number): Omit<TemplateConfig, '
 
 // ─── Design Tab Panels ──────────────────────────────────────────────────────
 
-type DesignTab = 'presets' | 'layout' | 'style' | 'text';
+type DesignTab = 'presets' | 'layout' | 'style' | 'text' | 'stickers';
 
 interface TemplateDesignerProps {
     initialTemplate?: TemplateConfig | null;
@@ -420,6 +430,7 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     });
     const [activeTab, setActiveTab] = useState<DesignTab>('presets');
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
+    const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
     const previewRef = useRef<HTMLDivElement>(null);
 
     const update = useCallback((patch: Partial<TemplateConfig>) => {
@@ -433,8 +444,9 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     }, []);
 
     const applyPreset = useCallback((preset: Omit<TemplateConfig, 'id'>) => {
-        setTemplate({ id: generateId(), ...preset, backgroundImage: null });
+        setTemplate({ id: generateId(), ...preset, backgroundImage: null, stickers: [] });
         setSelectedTextId(null);
+        setSelectedStickerId(null);
     }, []);
 
     const setLayout = useCallback((rows: number, cols: number) => {
@@ -468,7 +480,61 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
         updateText(id, { x, y });
     }, [updateText]);
 
-    const startDrag = useDraggable(previewRef, moveText);
+    // Sticker operations
+    const createDefaultSticker = (src: string): Sticker => ({
+        id: `stk_${Date.now()}`,
+        src,
+        x: 50,
+        y: 50,
+        width: 100,
+        rotation: 0,
+    });
+
+    const addSticker = useCallback((src: string) => {
+        const stk = createDefaultSticker(src);
+        setTemplate(prev => ({ ...prev, stickers: [...(prev.stickers || []), stk] }));
+        setSelectedStickerId(stk.id);
+    }, []);
+
+    const updateSticker = useCallback((id: string, patch: Partial<Sticker>) => {
+        setTemplate(prev => ({
+            ...prev,
+            stickers: (prev.stickers || []).map(s => s.id === id ? { ...s, ...patch } : s),
+        }));
+    }, []);
+
+    const deleteSticker = useCallback((id: string) => {
+        setTemplate(prev => ({
+            ...prev,
+            stickers: (prev.stickers || []).filter(s => s.id !== id),
+        }));
+        setSelectedStickerId(null);
+    }, []);
+
+    const moveSticker = useCallback((id: string, x: number, y: number) => {
+        updateSticker(id, { x, y });
+    }, [updateSticker]);
+
+    // Unified drag handler
+    const moveElement = useCallback((id: string, x: number, y: number) => {
+        if (id.startsWith('stk_')) {
+            moveSticker(id, x, y);
+        } else {
+            moveText(id, x, y);
+        }
+    }, [moveSticker, moveText]);
+
+    const startDrag = useDraggable(previewRef, moveElement);
+
+    const handleStickerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            if (ev.target?.result) addSticker(ev.target.result as string);
+        };
+        reader.readAsDataURL(file);
+    };
 
     const handleBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -483,6 +549,7 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     };
 
     const selectedText = template.textElements.find(t => t.id === selectedTextId);
+    const selectedSticker = (template.stickers || []).find(s => s.id === selectedStickerId);
 
     // ── Tabs ─────────────────────────────────────────────────────────────
 
@@ -491,6 +558,7 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
         { key: 'layout', label: 'Layout', icon: '⊞' },
         { key: 'style', label: 'Style', icon: '🖌️' },
         { key: 'text', label: 'Text', icon: 'Aa' },
+        { key: 'stickers', label: 'Stickers', icon: '⭐' },
     ];
 
     return (
@@ -801,6 +869,82 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
                                     )}
                                 </div>
                             )}
+                            {/* ── Stickers ── */}
+                            {activeTab === 'stickers' && (
+                                <div className="space-y-6">
+                                    <div>
+                                        <h3 className="font-bold text-gray-900 mb-2">My Stickers</h3>
+                                        <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors">
+                                            <div className="flex flex-col items-center pt-5 pb-6">
+                                                <span className="text-2xl mb-1">📂</span>
+                                                <p className="text-xs text-gray-500">Upload Image</p>
+                                            </div>
+                                            <input type="file" className="hidden" accept="image/*" onChange={handleStickerUpload} />
+                                        </label>
+                                    </div>
+
+                                    {(template.stickers || []).length > 0 && (
+                                        <div className="space-y-2">
+                                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Layers</p>
+                                            <div className="space-y-2">
+                                                {(template.stickers || []).map((stk, i) => (
+                                                    <div
+                                                        key={stk.id}
+                                                        onClick={() => setSelectedStickerId(stk.id)}
+                                                        className={`flex items-center gap-3 p-2 rounded-lg border-2 cursor-pointer transition-all ${selectedStickerId === stk.id
+                                                            ? 'border-indigo-500 bg-indigo-50'
+                                                            : 'border-transparent hover:bg-gray-100'
+                                                            }`}
+                                                    >
+                                                        <img src={stk.src} className="w-8 h-8 object-contain bg-white rounded border border-gray-200" />
+                                                        <span className="text-sm font-medium flex-1">Sticker {i + 1}</span>
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); deleteSticker(stk.id); }}
+                                                            className="p-1 text-gray-400 hover:text-red-500"
+                                                        >
+                                                            ✕
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {selectedSticker && (
+                                        <div className="p-4 bg-gray-50 rounded-xl space-y-4">
+                                            <div className="flex justify-between items-center pb-2 border-b border-gray-200">
+                                                <span className="text-xs font-bold text-gray-900 uppercase">Selected Sticker</span>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-semibold text-gray-700 mb-1">Size (px)</label>
+                                                <input
+                                                    type="range"
+                                                    min={20}
+                                                    max={300}
+                                                    value={selectedSticker.width}
+                                                    onChange={(e) => updateSticker(selectedSticker.id, { width: Number(e.target.value) })}
+                                                    className="w-full accent-indigo-600"
+                                                />
+                                                <span className="text-xs text-gray-500">{selectedSticker.width}px relative width</span>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-semibold text-gray-700 mb-1">Rotation</label>
+                                                <input
+                                                    type="range"
+                                                    min={-180}
+                                                    max={180}
+                                                    value={selectedSticker.rotation}
+                                                    onChange={(e) => updateSticker(selectedSticker.id, { rotation: Number(e.target.value) })}
+                                                    className="w-full accent-indigo-600"
+                                                />
+                                                <span className="text-xs text-gray-500">{selectedSticker.rotation}°</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -887,6 +1031,33 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
                                         }}
                                     >
                                         {el.text}
+                                    </div>
+                                ))}
+
+                                {/* Draggable stickers */}
+                                {(template.stickers || []).map((stk) => (
+                                    <div
+                                        key={stk.id}
+                                        onMouseDown={(e) => startDrag(e, stk.id, stk.x, stk.y)}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedStickerId(stk.id);
+                                            setActiveTab('stickers');
+                                        }}
+                                        className={`absolute cursor-move select-none ${selectedStickerId === stk.id ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-transparent' : ''}`}
+                                        style={{
+                                            left: `${stk.x}%`,
+                                            top: `${stk.y}%`,
+                                            width: stk.width,
+                                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
+                                            zIndex: 20,
+                                        }}
+                                    >
+                                        <img
+                                            src={stk.src}
+                                            alt="sticker"
+                                            className="w-full h-auto drop-shadow-md pointer-events-none"
+                                        />
                                     </div>
                                 ))}
 

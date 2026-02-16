@@ -1,23 +1,33 @@
 'use client';
 
 import React from 'react';
-import dynamic from 'next/dynamic';
-
-// Dynamically import the editor to avoid SSR issues with fabric.js
-const WhiteboardEditor = dynamic(
-    () => import('@/components/admin/WhiteboardEditor'),
-    { ssr: false, loading: () => <p>Loading Editor...</p> }
-);
+import { useRouter } from 'next/navigation';
+import TemplateDesigner, { TemplateConfig } from '@/components/templates/TemplateDesigner';
 
 export default function NewTemplatePage() {
-    return (
-        <div>
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold mb-2">Create New Template</h1>
-                <p className="text-gray-400">Design a custom overlay for your event</p>
-            </div>
+    const router = useRouter();
 
-            <WhiteboardEditor />
+    const handleSave = (config: TemplateConfig) => {
+        console.log('Template Configuration:', config);
+        // For now, since this is a standalone creaetor, we'll just alert the JSON
+        // In a real app, this might save to a global library
+        const json = JSON.stringify(config, null, 2);
+        navigator.clipboard.writeText(json);
+        alert('Template configuration copied to clipboard! (Check console for full JSON)');
+    };
+
+    const handleClose = () => {
+        router.back();
+    };
+
+    return (
+        <div className="min-h-screen bg-gray-50 flex flex-col">
+            <div className="flex-1 relative">
+                <TemplateDesigner
+                    onSave={handleSave}
+                    onClose={handleClose}
+                />
+            </div>
         </div>
     );
 }

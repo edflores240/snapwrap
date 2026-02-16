@@ -79,6 +79,22 @@ export default function PublicBoothPage() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const autoSnapRef = useRef(false);
+    const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
+
+    const clearTimeouts = useCallback(() => {
+        timeoutsRef.current.forEach(clearTimeout);
+        timeoutsRef.current = [];
+    }, []);
+
+    const wait = useCallback((ms: number) => {
+        return new Promise<void>((resolve) => {
+            const id = setTimeout(() => {
+                resolve();
+                timeoutsRef.current = timeoutsRef.current.filter(t => t !== id);
+            }, ms);
+            timeoutsRef.current.push(id);
+        });
+    }, []);
 
     // Derived theme values
     const tc = boothSettings.themeColor || '#6366f1';
@@ -122,7 +138,10 @@ export default function PublicBoothPage() {
 
     useEffect(() => {
         if (params.slug) fetchEvent();
-        return () => { stopCamera(); };
+        return () => {
+            stopCamera();
+            clearTimeouts();
+        };
     }, [params.slug]);
 
     const fetchEvent = async () => {
@@ -239,7 +258,7 @@ export default function PublicBoothPage() {
             // Short breather between shots (not before first)
             if (i > 0) {
                 setBetweenShots(true);
-                await new Promise(r => setTimeout(r, 1500));
+                await wait(1500);
                 setBetweenShots(false);
             }
 
@@ -248,7 +267,7 @@ export default function PublicBoothPage() {
             for (let c = cdSeconds; c > 0; c--) {
                 if (!autoSnapRef.current) break;
                 setCountdown(c);
-                await new Promise(r => setTimeout(r, 1000));
+                await wait(1000);
             }
             setCountdown(null);
 
@@ -256,7 +275,7 @@ export default function PublicBoothPage() {
 
             // Flash + capture
             setFlashActive(true);
-            await new Promise(r => setTimeout(r, 150));
+            await wait(150);
             const photo = takePhoto();
             setFlashActive(false);
 
@@ -319,6 +338,8 @@ export default function PublicBoothPage() {
 
     const handleRetake = async () => {
         autoSnapRef.current = false;
+        clearTimeouts();
+        setIsAutoSnapping(false);
         setCapturedPhotos([]);
         setCurrentSlotIndex(0);
         setDownloadUrl(null);
@@ -552,6 +573,30 @@ export default function PublicBoothPage() {
             ctx.fillText(el.text, 0, 0);
             ctx.restore();
         });
+
+        // Stickers
+        const stickerPromises = (selectedTemplate.stickers || []).map((stk) => {
+            return new Promise<void>((res) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                    ctx.save();
+                    const tx = (stk.x / 100) * W;
+                    const ty = (stk.y / 100) * H;
+                    ctx.translate(tx, ty);
+                    ctx.rotate((stk.rotation * Math.PI) / 180);
+                    const w = stk.width * SCALE;
+                    const h = (img.height / img.width) * w;
+                    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+                    ctx.restore();
+                    res();
+                };
+                img.onerror = () => res();
+                img.src = stk.src;
+            });
+        });
+
+        await Promise.all(stickerPromises);
 
         // Watermark
         if (selectedTemplate.watermarkText) {
@@ -858,7 +903,13 @@ export default function PublicBoothPage() {
                         {/* Controls */}
                         <div className="mt-6 flex items-center gap-4">
                             <button
-                                onClick={() => { autoSnapRef.current = false; setStep('select-template'); stopCamera(); }}
+                                onClick={() => {
+                                    autoSnapRef.current = false;
+                                    clearTimeouts();
+                                    setIsAutoSnapping(false);
+                                    setStep('select-template');
+                                    stopCamera();
+                                }}
                                 className="px-6 py-3 rounded-xl border border-white/20 text-gray-400 hover:text-white hover:bg-white/10 transition-all text-sm"
                             >
                                 ← Change Template
@@ -893,9 +944,9 @@ export default function PublicBoothPage() {
 
                         {/* Composite preview */}
                         <div
-                            className="relative shadow-2xl"
+                            className="relative shadow-2xl mx-auto"
                             style={{
-                                width: 360,
+                                width: 'min(90vw, 600px)',
                                 background: selectedTemplate.backgroundImage
                                     ? `url(${selectedTemplate.backgroundImage}) center/cover no-repeat`
                                     : selectedTemplate.background,
@@ -952,6 +1003,23 @@ export default function PublicBoothPage() {
                                     }}
                                 >
                                     {el.text}
+                                </div>
+                            ))}
+
+                            {/* Stickers */}
+                            {(selectedTemplate.stickers || []).map((stk: any) => (
+                                <div
+                                    key={stk.id}
+                                    className="absolute select-none pointer-events-none"
+                                    style={{
+                                        left: `${stk.x}%`,
+                                        top: `${stk.y}%`,
+                                        width: `${stk.width}px`,
+                                        transform: `translate(-50%, -50%) rotate(${stk.rotation}deg) scale(0.85)`,
+                                        zIndex: 20,
+                                    }}
+                                >
+                                    <img src={stk.src} alt="sticker" className="w-full h-auto drop-shadow-md" />
                                 </div>
                             ))}
 
@@ -1016,9 +1084,17 @@ export default function PublicBoothPage() {
                                 />
                             </div>
 
-                            <p className="text-sm text-gray-500 mt-6 break-all max-w-sm mx-auto font-mono">
-                                {downloadUrl}
-                            </p>
+                            <div className="mt-6 text-center">
+                                <p className="text-sm text-gray-500 mb-2">Or visit this link:</p>
+                                <a
+                                    href={downloadUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-400 hover:text-indigo-300 underline break-all font-monotext-sm block px-4 py-2 bg-white/5 rounded-lg border border-white/10 transition-colors"
+                                >
+                                    {downloadUrl}
+                                </a>
+                            </div>
 
                             {/* Actions */}
                             <div className="flex gap-4 justify-center mt-8">
