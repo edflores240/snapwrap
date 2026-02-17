@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
+import { supabase } from '@/lib/supabase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -431,16 +432,56 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     const [activeTab, setActiveTab] = useState<DesignTab>('presets');
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
+    const [backgroundImage, setBackgroundImage] = useState<string | null>(initialTemplate?.backgroundImage || null);
+    const [userStickers, setUserStickers] = useState<{ id: string; image_url: string }[]>([]);
+    const [loadingStickers, setLoadingStickers] = useState(false);
+
     const previewRef = useRef<HTMLDivElement>(null);
+
+    // ── Fetch User Stickers ──────────────────────────────────────────────
+    useEffect(() => {
+        const fetchUserStickers = async () => {
+            setLoadingStickers(true);
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) {
+                setLoadingStickers(false);
+                return;
+            }
+
+            const { data, error } = await supabase
+                .from('user_stickers')
+                .select('id, image_url')
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: false });
+
+            if (!error && data) {
+                setUserStickers(data);
+            }
+            setLoadingStickers(false);
+        };
+
+        fetchUserStickers();
+    }, []);
+
+    // ── Background ───────────────────────────────────────────────────────
+
+    const resetToNoBackground = () => {
+        setBackgroundImage(null);
+        setTemplate(prev => ({ ...prev, backgroundImage: null, background: '#ffffff' }));
+    };
+
+    const generateTemplateWithBg = (bg: string) => {
+        const base = { ...template, background: bg };
+        if (!backgroundImage) base.backgroundImage = null;
+        return base;
+    };
+
+    const setTemplateBackgroundImage = useCallback((img: string | null) => {
+        setTemplate(prev => ({ ...prev, backgroundImage: img }));
+    }, []);
 
     const update = useCallback((patch: Partial<TemplateConfig>) => {
         setTemplate((prev) => ({ ...prev, ...patch }));
-    }, []);
-
-    // backgroundImage is now part of template.backgroundImage
-    const backgroundImage = template.backgroundImage || null;
-    const setBackgroundImage = useCallback((img: string | null) => {
-        setTemplate(prev => ({ ...prev, backgroundImage: img }));
     }, []);
 
     const applyPreset = useCallback((preset: Omit<TemplateConfig, 'id'>) => {
@@ -526,12 +567,60 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
 
     const startDrag = useDraggable(previewRef, moveElement);
 
-    const handleStickerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleStickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+
+        // Read and add to current template immediately
         const reader = new FileReader();
-        reader.onload = (ev) => {
-            if (ev.target?.result) addSticker(ev.target.result as string);
+        reader.onload = async (ev) => {
+            const dataUrl = ev.target?.result as string;
+            if (!dataUrl) return;
+
+            // Add to template
+            addSticker(dataUrl);
+
+            // Save to database for reuse
+            try {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) return; // Not logged in, skip DB save
+
+                // Upload to storage
+                const fileName = `stickers/${user.id}/${Date.now()}_${file.name}`;
+                const { error: uploadError } = await supabase.storage
+                    .from('booth-photos')
+                    .upload(fileName, file, { contentType: file.type, upsert: false });
+
+                if (uploadError) {
+                    console.error('Sticker upload error:', uploadError);
+                    return;
+                }
+
+                // Get public URL
+                const { data: urlData } = supabase.storage
+                    .from('booth-photos')
+                    .getPublicUrl(fileName);
+
+                const publicUrl = urlData.publicUrl;
+
+                // Insert into user_stickers table
+                const { data: newSticker, error: insertError } = await supabase
+                    .from('user_stickers')
+                    .insert({
+                        user_id: user.id,
+                        storage_path: fileName,
+                        image_url: publicUrl,
+                    })
+                    .select('id, image_url')
+                    .single();
+
+                if (!insertError && newSticker) {
+                    // Add to local state
+                    setUserStickers(prev => [newSticker, ...prev]);
+                }
+            } catch (err) {
+                console.error('Error saving sticker:', err);
+            }
         };
         reader.readAsDataURL(file);
     };
@@ -882,6 +971,31 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
                                             <input type="file" className="hidden" accept="image/*" onChange={handleStickerUpload} />
                                         </label>
                                     </div>
+
+                                    {/* Saved Stickers Gallery */}
+                                    {userStickers.length > 0 && (
+                                        <div className="space-y-2">
+                                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Saved Stickers</p>
+                                            <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto p-2 bg-gray-50 rounded-lg">
+                                                {userStickers.map((sticker) => (
+                                                    <button
+                                                        key={sticker.id}
+                                                        onClick={() => addSticker(sticker.image_url)}
+                                                        className="aspect-square border-2 border-gray-200 rounded-lg overflow-hidden hover:border-indigo-500 hover:shadow-lg transition-all bg-white p-1"
+                                                        title="Click to add to template"
+                                                    >
+                                                        <img src={sticker.image_url} className="w-full h-full object-contain" alt="Saved sticker" />
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {loadingStickers && (
+                                        <div className="text-center text-sm text-gray-500 py-4">
+                                            Loading your stickers...
+                                        </div>
+                                    )}
 
                                     {(template.stickers || []).length > 0 && (
                                         <div className="space-y-2">
