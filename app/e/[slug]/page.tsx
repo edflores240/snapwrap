@@ -252,7 +252,7 @@ export default function PublicBoothPage() {
         // Calculate cell aspect ratio based on reference width (420)
         // (Similar logic to render)
         const refW = 420;
-        const refH = refW * (rows > cols ? 4 / 3 : 3 / 4);
+        const refH = refW * (rows > cols ? 3 / 2 : 9 / 16); // 3:2 portrait, 16:9 landscape
         const padPctX = (pad / refW) * 100;
         const gapPctX = (gap / refW) * 100;
         const gridW = 100 - (padPctX * 2);
@@ -506,7 +506,7 @@ export default function PublicBoothPage() {
         const rows = selectedTemplate.layout.rows;
         const gridW = W - PAD * 2;
         const slotW = (gridW - GAP * (cols - 1)) / cols;
-        const aspectRatio = rows > cols ? 4 / 3 : 3 / 4;
+        const aspectRatio = rows > cols ? 3 / 2 : 16 / 9; // 3:2 portrait, 16:9 landscape for groups
         const slotH = slotW / aspectRatio;
         const gridH = slotH * rows + GAP * (rows - 1);
         const H = gridH + PAD * 2 + 60 * SCALE;
@@ -1011,7 +1011,7 @@ export default function PublicBoothPage() {
 
                                         // Use same calc as standardizer (420 ref)
                                         const refW = 420;
-                                        const refH = refW * (rows > cols ? 4 / 3 : 3 / 4);
+                                        const refH = refW * (rows > cols ? 3 / 2 : 9 / 16); // 3:2 portrait, 16:9 landscape
                                         const padPctX = (pad / refW) * 100;
                                         const padPctY = (pad / refH) * 100;
                                         const gapPctX = (gap / refW) * 100;
@@ -1206,7 +1206,7 @@ export default function PublicBoothPage() {
                                     const gap = selectedTemplate.gap;
 
                                     const refW = 420;
-                                    const refH = refW * (rows > cols ? 4 / 3 : 3 / 4);
+                                    const refH = refW * (rows > cols ? 3 / 2 : 9 / 16); // 3:2 portrait, 16:9 landscape
                                     const padPctX = (pad / refW) * 100;
                                     const padPctY = (pad / refH) * 100;
                                     const gapPctX = (gap / refW) * 100;
