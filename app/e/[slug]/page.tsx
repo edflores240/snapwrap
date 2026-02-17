@@ -228,21 +228,77 @@ export default function PublicBoothPage() {
         streamRef.current = null;
     };
 
+    // Callback ref to ensure video stream is attached instantly on mount/remount
+    const setVideoRef = useCallback((node: HTMLVideoElement | null) => {
+        videoRef.current = node;
+        if (node && streamRef.current) {
+            node.srcObject = streamRef.current;
+            node.play().catch(() => { }); // Ensure play
+        }
+    }, []);
+
     const takePhoto = useCallback(() => {
-        if (!videoRef.current || !canvasRef.current) return;
+        if (!videoRef.current || !canvasRef.current || !selectedTemplate) return;
         const video = videoRef.current;
         const canvas = canvasRef.current;
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+
+        // 1. Calculate the Target Aspect Ratio (from Template Slot Grid)
+        // Assuming uniform grid:
+        const rows = selectedTemplate.layout.rows;
+        const cols = selectedTemplate.layout.cols;
+        const gap = selectedTemplate.gap;
+        const pad = selectedTemplate.padding;
+
+        // Calculate cell aspect ratio based on reference width (420)
+        // (Similar logic to render)
+        const refW = 420;
+        const refH = refW * (rows > cols ? 4 / 3 : 3 / 4);
+        const padPctX = (pad / refW) * 100;
+        const gapPctX = (gap / refW) * 100;
+        const gridW = 100 - (padPctX * 2);
+        const cellW = (gridW - (gapPctX * (cols - 1))) / cols;
+
+        const padPctY = (pad / refH) * 100;
+        const gapPctY = (gap / refH) * 100;
+        const gridH = 100 - (padPctY * 2);
+        const cellH = (gridH - (gapPctY * (rows - 1))) / rows;
+
+        // Convert % back to Ratio: (cellW * refW) / (cellH * refH)
+        // Or simpler: cellW % of refW / cellH % of refH
+        // Ratio = (cellW/100 * refW) / (cellH/100 * refH)
+        const slotWidth = (cellW / 100) * refW;
+        const slotHeight = (cellH / 100) * refH;
+
+        const targetRatio = slotWidth / slotHeight;
+
+        // 2. Video Source Ratio
+        const videoRatio = video.videoWidth / video.videoHeight;
+
+        let sx = 0, sy = 0, sWidth = video.videoWidth, sHeight = video.videoHeight;
+
+        // 3. Crop (Cover Logic)
+        if (videoRatio > targetRatio) {
+            // Video wider than slot
+            sWidth = video.videoHeight * targetRatio;
+            sx = (video.videoWidth - sWidth) / 2;
+        } else {
+            // Video tall/narrower than slot
+            sHeight = video.videoWidth / targetRatio;
+            sy = (video.videoHeight - sHeight) / 2;
+        }
+
+        canvas.width = sWidth;
+        canvas.height = sHeight;
+
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
-        // Mirror (selfie mode)
+
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
-        ctx.drawImage(video, 0, 0);
+        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        return canvas.toDataURL('image/jpeg', 0.9);
-    }, []);
+        return canvas.toDataURL('image/jpeg', 0.95);
+    }, [selectedTemplate]);
 
     // ── Auto-Snap Flow ────────────────────────────────────────────────
 
@@ -848,17 +904,15 @@ export default function PublicBoothPage() {
                             </div>
                         </div>
 
-                        {/* Camera viewport */}
-                        <div className="relative w-full max-w-4xl aspect-[4/3] md:aspect-video rounded-3xl overflow-hidden bg-black border-4 border-white/10 shadow-2xl">
-                            {/* 1. Camera Feed (Fixed Background) */}
-                            <video
-                                ref={videoRef}
-                                autoPlay
-                                playsInline
-                                muted
-                                className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-                                style={{ transform: 'scaleX(-1)' }}
-                            />
+                        {/* Camera viewport - Dynamic Perspective */}
+                        <div
+                            className="relative w-full max-w-4xl rounded-3xl overflow-hidden bg-black border-4 border-white/10 shadow-2xl"
+                            style={{
+                                aspectRatio: `${selectedTemplate.layout.cols} / ${selectedTemplate.layout.rows}`
+                            }}
+                        >
+                            {/* 1. Camera Feed Removed (Now inside Slots) */}
+                            {/* video was here */}
 
                             {/* 2. Scalable Template Overlay */}
                             <div
@@ -890,6 +944,12 @@ export default function PublicBoothPage() {
                                         // This is tricky without exact pixel mapping.
                                         // Alternative: Use the Grid logic.
 
+                                        // Zoom Factor: Gentle Zoom (Keep ~20% context)
+                                        // Previous was 1.5x of cols. Now let's just ensure the slot takes up ~60-70% of view.
+                                        // Current Size (in %) = 100/cols approx.
+                                        // Target Size = 70%. Scale = 70 / (100/cols) = 0.7 * cols.
+                                        const scale = Math.max(1, selectedTemplate.layout.cols * 0.75);
+
                                         // Let's compute Slot Center (Cx, Cy) in percentage (0-100)
                                         const row = Math.floor(currentSlotIndex / cols);
                                         const col = currentSlotIndex % cols;
@@ -906,7 +966,7 @@ export default function PublicBoothPage() {
                                         // Scale: We want the slot to fill say 60% of the screen?
                                         // Zoom Factor = 3 (Safe generic zoom)
                                         // Or cleaner: S = 1 / (1/cols) * 0.8 => 0.8 * cols.
-                                        const scale = Math.min(cols, rows) * 1.5;
+
 
                                         // Translate to center:
                                         // T = 50 - Center * S ? No.
@@ -916,82 +976,94 @@ export default function PublicBoothPage() {
                                     })()
                                 }}
                             >
-                                {/* SVG Overlay with Mask */}
-                                <svg
-                                    className="w-full h-full"
-                                    viewBox={`0 0 1000 ${1000 * (selectedTemplate.layout.rows > selectedTemplate.layout.cols ? 4 / 3 : 3 / 4)}`}
-                                    preserveAspectRatio="none"
-                                >
-                                    <defs>
-                                        <mask id="slots-mask">
-                                            {/* White rect = opaque, Black rect = transparent hole */}
-                                            <rect x="0" y="0" width="100%" height="100%" fill="white" />
-                                            {selectedTemplate.slots.map((_, i) => {
-                                                const rows = selectedTemplate.layout.rows;
-                                                const cols = selectedTemplate.layout.cols;
-                                                const pad = selectedTemplate.padding; // treat as relative
-                                                const gap = selectedTemplate.gap;
+                                {/* 1. Template Background Layer */}
+                                <div
+                                    className="absolute inset-0 w-full h-full"
+                                    style={{
+                                        background: selectedTemplate.background.includes('gradient') || selectedTemplate.background.includes('url')
+                                            ? selectedTemplate.background
+                                            : selectedTemplate.background,
+                                        backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
+                                        backgroundSize: 'cover',
+                                        backgroundPosition: 'center',
+                                    }}
+                                />
 
-                                                // We need to execute the exact grid math here to match visual
-                                                // Or easier: Render the grid using HTML/CSS inside a foreignObject? 
-                                                // SVG is better for masking. 
-                                                // Calculate precise % based on 420px reference width
-                                                const refW = 420; // Reference width from designer
-                                                const refH = refW * (selectedTemplate.layout.rows > selectedTemplate.layout.cols ? 4 / 3 : 3 / 4);
+                                {/* 2. Slot Grid (Render Photos or Camera) */}
+                                <div className="absolute inset-0 w-full h-full">
+                                    {selectedTemplate.slots.map((_, i) => {
+                                        const cols = selectedTemplate.layout.cols;
+                                        const rows = selectedTemplate.layout.rows;
+                                        const pad = selectedTemplate.padding;
+                                        const gap = selectedTemplate.gap;
 
-                                                const padPctX = (selectedTemplate.padding / refW) * 100;
-                                                const padPctY = (selectedTemplate.padding / refH) * 100;
-                                                const gapPctX = (selectedTemplate.gap / refW) * 100;
-                                                const gapPctY = (selectedTemplate.gap / refH) * 100;
+                                        // Use same calc as standardizer (420 ref)
+                                        const refW = 420;
+                                        const refH = refW * (rows > cols ? 4 / 3 : 3 / 4);
+                                        const padPctX = (pad / refW) * 100;
+                                        const padPctY = (pad / refH) * 100;
+                                        const gapPctX = (gap / refW) * 100;
+                                        const gapPctY = (gap / refH) * 100;
 
-                                                // Effective Grid Area
-                                                const gridW = 100 - (padPctX * 2);
-                                                const gridH = 100 - (padPctY * 2);
+                                        const gridW = 100 - (padPctX * 2);
+                                        const gridH = 100 - (padPctY * 2);
+                                        const cellW = (gridW - (gapPctX * (cols - 1))) / cols;
+                                        const cellH = (gridH - (gapPctY * (rows - 1))) / rows;
 
-                                                // Cell Size
-                                                const cellW = (gridW - (gapPctX * (selectedTemplate.layout.cols - 1))) / selectedTemplate.layout.cols;
-                                                const cellH = (gridH - (gapPctY * (selectedTemplate.layout.rows - 1))) / selectedTemplate.layout.rows;
+                                        const r = Math.floor(i / cols);
+                                        const c = i % cols;
 
-                                                const r = Math.floor(i / selectedTemplate.layout.cols);
-                                                const c = i % selectedTemplate.layout.cols;
+                                        const isCurrent = i === currentSlotIndex;
+                                        // Show camera if current AND auto-snapping (or just ready to snap)
+                                        // If not auto-snapping yet (just preview), we might show it in first slot?
+                                        // "isAutoSnapping" is strictly for the countdown loop.
+                                        // If we are in 'capture' step, we should show camera in current slot.
+                                        const showCamera = isCurrent && !capturedPhotos[i];
 
-                                                return (
-                                                    <rect
-                                                        key={i}
-                                                        x={`${padPctX + (c * (cellW + gapPctX))}%`}
-                                                        y={`${padPctY + (r * (cellH + gapPctY))}%`}
-                                                        width={`${cellW}%`}
-                                                        height={`${cellH}%`}
-                                                        fill="black"
-                                                        rx="1%" // Soft corner?
-                                                    />
-                                                );
-                                            })}
-                                        </mask>
-                                    </defs>
+                                        return (
+                                            <div
+                                                key={i}
+                                                className="absolute overflow-hidden rounded-lg bg-black/10"
+                                                style={{
+                                                    left: `${padPctX + (c * (cellW + gapPctX))}%`,
+                                                    top: `${padPctY + (r * (cellH + gapPctY))}%`,
+                                                    width: `${cellW}%`,
+                                                    height: `${cellH}%`,
+                                                    borderRadius: `${selectedTemplate.borderRadius}px`, // Use template radius if avail? Or fixed.
+                                                    // Design tweak: user wants template radius. Let's assume standard 1% or similar if not in config.
+                                                }}
+                                            >
+                                                {/* Render Photo if captured */}
+                                                {capturedPhotos[i] && (
+                                                    <img src={capturedPhotos[i]} className="absolute inset-0 w-full h-full object-cover" />
+                                                )}
 
-                                    {/* The Background Layer (masked) */}
-                                    <rect
-                                        x="0" y="0" width="100%" height="100%"
-                                        fill={selectedTemplate.background.includes('gradient') ? 'url(#bg-gradient)' : selectedTemplate.background}
-                                        mask="url(#slots-mask)"
-                                    />
-                                    {/* Background Image if any */}
-                                    {selectedTemplate.backgroundImage && (
-                                        <image href={selectedTemplate.backgroundImage} x="0" y="0" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" mask="url(#slots-mask)" />
-                                    )}
-                                </svg>
+                                                {/* Render Camera if active */}
+                                                {showCamera && (
+                                                    <div className="absolute inset-0 w-full h-full">
+                                                        <video
+                                                            ref={setVideoRef}
+                                                            autoPlay
+                                                            playsInline
+                                                            muted
+                                                            className="absolute inset-0 w-full h-full object-cover"
+                                                            style={{ transform: 'scaleX(-1)' }}
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
 
-                                {/* Overlay Content (Text/Stickers) - Rendered on top of SVG */}
+                                {/* 3. Text & Stickers Overlay */}
                                 <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl">
-                                    {/* Text Elements */}
                                     {selectedTemplate.textElements.map((el) => (
                                         <div key={el.id} style={{
                                             position: 'absolute',
                                             left: `${el.x}%`, top: `${el.y}%`,
                                             transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
                                             color: el.color,
-                                            // Font size calculation: el.fontSize is px relative to 420px width
                                             fontSize: `calc(${el.fontSize} / 420 * 100cqw)`,
                                             fontFamily: el.fontFamily,
                                             fontWeight: el.fontWeight,
@@ -1002,8 +1074,6 @@ export default function PublicBoothPage() {
                                             {el.text}
                                         </div>
                                     ))}
-
-                                    {/* Stickers */}
                                     {(selectedTemplate.stickers || []).map((stk) => (
                                         <div key={stk.id} style={{
                                             position: 'absolute',
@@ -1014,22 +1084,6 @@ export default function PublicBoothPage() {
                                             <img src={stk.src} className="w-full h-auto drop-shadow-md" />
                                         </div>
                                     ))}
-
-                                    {/* Captured Photos (Fill the holes) */}
-                                    <div className="absolute inset-0 grid z-[-1]" style={{
-                                        gridTemplateRows: `repeat(${selectedTemplate.layout.rows}, 1fr)`,
-                                        gridTemplateColumns: `repeat(${selectedTemplate.layout.cols}, 1fr)`,
-                                        padding: `calc(${selectedTemplate.padding} / 420 * 100cqw)`,
-                                        gap: `calc(${selectedTemplate.gap} / 420 * 100cqw)`
-                                    }}>
-                                        {selectedTemplate.slots.map((_, i) => (
-                                            <div key={i} className="relative overflow-hidden rounded-md">
-                                                {capturedPhotos[i] && (
-                                                    <img src={capturedPhotos[i]} className="absolute inset-0 w-full h-full object-cover" />
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
                                 </div>
                             </div>
 
