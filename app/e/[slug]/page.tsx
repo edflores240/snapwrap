@@ -920,7 +920,16 @@ export default function PublicBoothPage() {
                         <div
                             className="relative w-full max-w-4xl rounded-3xl overflow-hidden bg-black border-4 border-white/10 shadow-2xl"
                             style={{
-                                aspectRatio: `${selectedTemplate.layout.cols} / ${selectedTemplate.layout.rows}`
+                                aspectRatio: (() => {
+                                    const cols = selectedTemplate.layout.cols;
+                                    const rows = selectedTemplate.layout.rows;
+                                    const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
+
+                                    // Calculate container aspect ratio based on slot dimensions
+                                    const containerWidth = cols;
+                                    const containerHeight = rows * (1 / slotAspectRatio);
+                                    return `${containerWidth} / ${containerHeight}`;
+                                })()
                             }}
                         >
                             {/* 1. Camera Feed Removed (Now inside Slots) */}
@@ -1180,7 +1189,15 @@ export default function PublicBoothPage() {
                             className="relative shadow-2xl mx-auto overflow-hidden rounded-3xl"
                             style={{
                                 width: 'min(90vw, 600px)',
-                                aspectRatio: `${selectedTemplate.layout.cols} / ${selectedTemplate.layout.rows}`,
+                                aspectRatio: (() => {
+                                    const cols = selectedTemplate.layout.cols;
+                                    const rows = selectedTemplate.layout.rows;
+                                    const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
+
+                                    const containerWidth = cols;
+                                    const containerHeight = rows * (1 / slotAspectRatio);
+                                    return `${containerWidth} / ${containerHeight}`;
+                                })(),
                                 containerType: 'inline-size', // Enable cqw units
                             }}
                         >
