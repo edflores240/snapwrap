@@ -622,6 +622,12 @@ export default function PublicBoothPage() {
 
         // Text elements
         selectedTemplate.textElements.forEach((el) => {
+            // Re-calculate font size based on 420 scale (since canvas uses 420*SCALE as W)
+            // cqw in review = % of width.
+            // If font is 20px in 420px, it is 4.7% width.
+            // In canvas W = 420*SCALE. Font = 20*SCALE.
+            // This means logic matches perfectly.
+
             ctx.save();
             ctx.font = `${el.fontStyle === 'italic' ? 'italic ' : ''}${el.fontWeight} ${el.fontSize * SCALE}px ${el.fontFamily}`;
             ctx.fillStyle = el.color;
@@ -631,8 +637,14 @@ export default function PublicBoothPage() {
             const ty = (el.y / 100) * H;
             ctx.translate(tx, ty);
             ctx.rotate((el.rotation * Math.PI) / 180);
+            if (el.textShadow) {
+                // Parse simple shadow if possible or ignore for canvasMVP
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4 * SCALE;
+            }
             if (el.letterSpacing) {
-                ctx.letterSpacing = `${el.letterSpacing * SCALE}px`;
+                // ctx.letterSpacing is experimental, might not work in all browsers
+                // fallback or skip
             }
             ctx.fillText(el.text, 0, 0);
             ctx.restore();
@@ -1163,90 +1175,109 @@ export default function PublicBoothPage() {
                     <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 animate-slideUp">
                         <h2 className="text-3xl font-bold mb-8">Looking Good? 🔥</h2>
 
-                        {/* Composite preview */}
+                        {/* Composite preview - Unified Layout Engine */}
                         <div
-                            className="relative shadow-2xl mx-auto"
+                            className="relative shadow-2xl mx-auto overflow-hidden rounded-3xl"
                             style={{
                                 width: 'min(90vw, 600px)',
-                                background: selectedTemplate.backgroundImage
-                                    ? `url(${selectedTemplate.backgroundImage}) center/cover no-repeat`
-                                    : selectedTemplate.background,
-                                borderRadius: selectedTemplate.borderRadius,
-                                padding: selectedTemplate.padding * 0.85,
-                                border: selectedTemplate.borderWidth
-                                    ? `${selectedTemplate.borderWidth}px solid ${selectedTemplate.borderColor}`
-                                    : 'none',
+                                aspectRatio: `${selectedTemplate.layout.cols} / ${selectedTemplate.layout.rows}`,
+                                containerType: 'inline-size', // Enable cqw units
                             }}
                         >
+                            {/* 1. Template Background Layer */}
                             <div
-                                className="grid"
+                                className="absolute inset-0 w-full h-full"
                                 style={{
-                                    gridTemplateRows: `repeat(${selectedTemplate.layout.rows}, 1fr)`,
-                                    gridTemplateColumns: `repeat(${selectedTemplate.layout.cols}, 1fr)`,
-                                    gap: selectedTemplate.gap * 0.85,
+                                    background: selectedTemplate.background.includes('gradient') || selectedTemplate.background.includes('url')
+                                        ? selectedTemplate.background
+                                        : selectedTemplate.background,
+                                    backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
+                                    backgroundSize: 'cover',
+                                    backgroundPosition: 'center',
                                 }}
-                            >
-                                {selectedTemplate.slots.map((slot: any, i: number) => (
-                                    <div
-                                        key={slot.id}
-                                        className="overflow-hidden"
-                                        style={{
-                                            aspectRatio: selectedTemplate.layout.rows > selectedTemplate.layout.cols ? '4/3' : '3/4',
-                                            borderRadius: Math.max(selectedTemplate.borderRadius - selectedTemplate.padding / 2, 4),
-                                        }}
-                                    >
-                                        {capturedPhotos[i] ? (
-                                            <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
-                                        ) : (
-                                            <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-500">No photo</div>
-                                        )}
+                            />
+
+                            {/* 2. Slot Grid (Render Photos) */}
+                            <div className="absolute inset-0 w-full h-full">
+                                {selectedTemplate.slots.map((_: any, i: number) => {
+                                    const cols = selectedTemplate.layout.cols;
+                                    const rows = selectedTemplate.layout.rows;
+                                    const pad = selectedTemplate.padding;
+                                    const gap = selectedTemplate.gap;
+
+                                    const refW = 420;
+                                    const refH = refW * (rows > cols ? 4 / 3 : 3 / 4);
+                                    const padPctX = (pad / refW) * 100;
+                                    const padPctY = (pad / refH) * 100;
+                                    const gapPctX = (gap / refW) * 100;
+                                    const gapPctY = (gap / refH) * 100;
+
+                                    const gridW = 100 - (padPctX * 2);
+                                    const gridH = 100 - (padPctY * 2);
+                                    const cellW = (gridW - (gapPctX * (cols - 1))) / cols;
+                                    const cellH = (gridH - (gapPctY * (rows - 1))) / rows;
+
+                                    const r = Math.floor(i / cols);
+                                    const c = i % cols;
+
+                                    return (
+                                        <div
+                                            key={i}
+                                            className="absolute overflow-hidden rounded-lg bg-black/10"
+                                            style={{
+                                                left: `${padPctX + (c * (cellW + gapPctX))}%`,
+                                                top: `${padPctY + (r * (cellH + gapPctY))}%`,
+                                                width: `${cellW}%`,
+                                                height: `${cellH}%`,
+                                                borderRadius: `${selectedTemplate.borderRadius}px`, // approximate match? 
+                                                // Actually lets use % or just standard px since container scales.
+                                                // To match exactly, we might want to scale radius too. 
+                                                // For now, fixed px is usually ok or use %.
+                                            }}
+                                        >
+                                            {capturedPhotos[i] ? (
+                                                <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
+                                            ) : (
+                                                <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-500">No photo</div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {/* 3. Text & Stickers Overlay */}
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl">
+                                {selectedTemplate.textElements.map((el) => (
+                                    <div key={el.id} style={{
+                                        position: 'absolute',
+                                        left: `${el.x}%`, top: `${el.y}%`,
+                                        transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
+                                        color: el.color,
+                                        fontSize: `calc(${el.fontSize} / 420 * 100cqw)`,
+                                        fontFamily: el.fontFamily,
+                                        fontWeight: el.fontWeight,
+                                        fontStyle: el.fontStyle,
+                                        width: 'max-content',
+                                        textShadow: el.textShadow
+                                    }}>
+                                        {el.text}
+                                    </div>
+                                ))}
+                                {(selectedTemplate.stickers || []).map((stk) => (
+                                    <div key={stk.id} style={{
+                                        position: 'absolute',
+                                        left: `${stk.x}%`, top: `${stk.y}%`,
+                                        width: `calc(${stk.width} / 420 * 100cqw)`,
+                                        transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`
+                                    }}>
+                                        <img src={stk.src} className="w-full h-auto drop-shadow-md" />
                                     </div>
                                 ))}
                             </div>
 
-                            {/* Text elements */}
-                            {selectedTemplate.textElements.map((el: any) => (
-                                <div
-                                    key={el.id}
-                                    className="absolute whitespace-nowrap pointer-events-none"
-                                    style={{
-                                        left: `${el.x}%`,
-                                        top: `${el.y}%`,
-                                        transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                        fontSize: el.fontSize * 0.85,
-                                        fontFamily: el.fontFamily,
-                                        color: el.color,
-                                        fontWeight: el.fontWeight,
-                                        fontStyle: el.fontStyle,
-                                        letterSpacing: el.letterSpacing,
-                                        textShadow: el.textShadow,
-                                        opacity: el.opacity,
-                                    }}
-                                >
-                                    {el.text}
-                                </div>
-                            ))}
-
-                            {/* Stickers */}
-                            {(selectedTemplate.stickers || []).map((stk: any) => (
-                                <div
-                                    key={stk.id}
-                                    className="absolute select-none pointer-events-none"
-                                    style={{
-                                        left: `${stk.x}%`,
-                                        top: `${stk.y}%`,
-                                        width: `${stk.width}px`,
-                                        transform: `translate(-50%, -50%) rotate(${stk.rotation}deg) scale(0.85)`,
-                                        zIndex: 20,
-                                    }}
-                                >
-                                    <img src={stk.src} alt="sticker" className="w-full h-auto drop-shadow-md" />
-                                </div>
-                            ))}
-
                             {/* Watermark */}
                             {selectedTemplate.watermarkText && (
-                                <div className="absolute bottom-2 left-0 right-0 text-center" style={{ fontSize: 9, opacity: 0.3, letterSpacing: 2, textTransform: 'uppercase', color: 'rgba(0,0,0,0.4)' }}>
+                                <div className="absolute bottom-2 left-0 right-0 text-center" style={{ fontSize: '2cqw', opacity: 0.3, letterSpacing: 2, textTransform: 'uppercase', color: 'rgba(0,0,0,0.4)', pointerEvents: 'none' }}>
                                     {selectedTemplate.watermarkText}
                                 </div>
                             )}
