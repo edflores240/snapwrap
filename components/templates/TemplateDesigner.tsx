@@ -949,143 +949,145 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
                     </div>
 
                     {/* RIGHT: Live Preview */}
-                    <div className="flex-1 bg-gray-100 p-8 flex items-center justify-center overflow-auto">
-                        <div className="text-center">
-                            <div
-                                ref={previewRef}
-                                className="relative shadow-2xl transition-all duration-300 inline-block select-none"
-                                style={{
-                                    width: 420,
-                                    background: backgroundImage
-                                        ? `url(${backgroundImage}) center/cover no-repeat`
-                                        : template.background,
-                                    borderRadius: template.borderRadius,
-                                    padding: template.padding,
-                                    border: template.borderWidth
-                                        ? `${template.borderWidth}px solid ${template.borderColor}`
-                                        : 'none',
-                                }}
-                            >
-                                {/* Photo grid */}
+                    <div className="flex-1 bg-gray-100 overflow-auto relative">
+                        <div className="min-h-full flex items-center justify-center p-8">
+                            <div className="text-center">
                                 <div
-                                    className="grid"
+                                    ref={previewRef}
+                                    className="relative shadow-2xl transition-all duration-300 inline-block select-none"
                                     style={{
-                                        gridTemplateRows: `repeat(${template.layout.rows}, 1fr)`,
-                                        gridTemplateColumns: `repeat(${template.layout.cols}, 1fr)`,
-                                        gap: template.gap,
+                                        width: 420,
+                                        background: backgroundImage
+                                            ? `url(${backgroundImage}) center/cover no-repeat`
+                                            : template.background,
+                                        borderRadius: template.borderRadius,
+                                        padding: template.padding,
+                                        border: template.borderWidth
+                                            ? `${template.borderWidth}px solid ${template.borderColor}`
+                                            : 'none',
                                     }}
                                 >
-                                    {template.slots.map((slot, i) => (
+                                    {/* Photo grid */}
+                                    <div
+                                        className="grid"
+                                        style={{
+                                            gridTemplateRows: `repeat(${template.layout.rows}, 1fr)`,
+                                            gridTemplateColumns: `repeat(${template.layout.cols}, 1fr)`,
+                                            gap: template.gap,
+                                        }}
+                                    >
+                                        {template.slots.map((slot, i) => (
+                                            <div
+                                                key={slot.id}
+                                                className="relative overflow-hidden flex items-center justify-center"
+                                                style={{
+                                                    aspectRatio: template.layout.rows > template.layout.cols ? '4/3' : '3/4',
+                                                    background: backgroundImage ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.05)',
+                                                    borderRadius: Math.max(template.borderRadius - template.padding / 2, 4),
+                                                    border: `1px dashed ${template.borderColor}`,
+                                                }}
+                                            >
+                                                <div className="text-center pointer-events-none">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 mx-auto" style={{ color: template.borderColor }}>
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z" />
+                                                    </svg>
+                                                    <span className="text-[10px] font-medium block mt-1" style={{ color: template.borderColor }}>
+                                                        Photo {i + 1}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Draggable text elements (absolute positioned) */}
+                                    {template.textElements.map((el) => (
                                         <div
-                                            key={slot.id}
-                                            className="relative overflow-hidden flex items-center justify-center"
+                                            key={el.id}
+                                            onMouseDown={(e) => startDrag(e, el.id, el.x, el.y)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setSelectedTextId(el.id);
+                                                setActiveTab('text');
+                                            }}
+                                            className={`absolute cursor-move whitespace-nowrap ${selectedTextId === el.id ? 'ring-2 ring-indigo-500 ring-offset-1' : ''
+                                                }`}
                                             style={{
-                                                aspectRatio: template.layout.rows > template.layout.cols ? '4/3' : '3/4',
-                                                background: backgroundImage ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.05)',
-                                                borderRadius: Math.max(template.borderRadius - template.padding / 2, 4),
-                                                border: `1px dashed ${template.borderColor}`,
+                                                left: `${el.x}%`,
+                                                top: `${el.y}%`,
+                                                transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
+                                                fontSize: el.fontSize,
+                                                fontFamily: el.fontFamily,
+                                                color: el.color,
+                                                fontWeight: el.fontWeight,
+                                                fontStyle: el.fontStyle,
+                                                textAlign: el.textAlign as any,
+                                                letterSpacing: el.letterSpacing,
+                                                textShadow: el.textShadow,
+                                                opacity: el.opacity,
+                                                lineHeight: 1.2,
+                                                padding: '2px 6px',
+                                                borderRadius: 4,
+                                                userSelect: 'none',
                                             }}
                                         >
-                                            <div className="text-center pointer-events-none">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 mx-auto" style={{ color: template.borderColor }}>
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z" />
-                                                </svg>
-                                                <span className="text-[10px] font-medium block mt-1" style={{ color: template.borderColor }}>
-                                                    Photo {i + 1}
-                                                </span>
-                                            </div>
+                                            {el.text}
                                         </div>
                                     ))}
+
+                                    {/* Draggable stickers */}
+                                    {(template.stickers || []).map((stk) => (
+                                        <div
+                                            key={stk.id}
+                                            onMouseDown={(e) => startDrag(e, stk.id, stk.x, stk.y)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setSelectedStickerId(stk.id);
+                                                setActiveTab('stickers');
+                                            }}
+                                            className={`absolute cursor-move select-none ${selectedStickerId === stk.id ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-transparent' : ''}`}
+                                            style={{
+                                                left: `${stk.x}%`,
+                                                top: `${stk.y}%`,
+                                                width: stk.width,
+                                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
+                                                zIndex: 20,
+                                            }}
+                                        >
+                                            <img
+                                                src={stk.src}
+                                                alt="sticker"
+                                                className="w-full h-auto drop-shadow-md pointer-events-none"
+                                            />
+                                        </div>
+                                    ))}
+
+                                    {/* Watermark */}
+                                    {template.watermarkText && (
+                                        <div
+                                            className="absolute bottom-2 left-0 right-0 text-center pointer-events-none"
+                                            style={{
+                                                fontSize: 10,
+                                                opacity: 0.3,
+                                                letterSpacing: 2,
+                                                textTransform: 'uppercase',
+                                                color: template.background.includes('linear') || template.background.startsWith('#1') || template.background.startsWith('#0')
+                                                    ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.4)',
+                                            }}
+                                        >
+                                            {template.watermarkText}
+                                        </div>
+                                    )}
                                 </div>
 
-                                {/* Draggable text elements (absolute positioned) */}
-                                {template.textElements.map((el) => (
-                                    <div
-                                        key={el.id}
-                                        onMouseDown={(e) => startDrag(e, el.id, el.x, el.y)}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSelectedTextId(el.id);
-                                            setActiveTab('text');
-                                        }}
-                                        className={`absolute cursor-move whitespace-nowrap ${selectedTextId === el.id ? 'ring-2 ring-indigo-500 ring-offset-1' : ''
-                                            }`}
-                                        style={{
-                                            left: `${el.x}%`,
-                                            top: `${el.y}%`,
-                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                            fontSize: el.fontSize,
-                                            fontFamily: el.fontFamily,
-                                            color: el.color,
-                                            fontWeight: el.fontWeight,
-                                            fontStyle: el.fontStyle,
-                                            textAlign: el.textAlign as any,
-                                            letterSpacing: el.letterSpacing,
-                                            textShadow: el.textShadow,
-                                            opacity: el.opacity,
-                                            lineHeight: 1.2,
-                                            padding: '2px 6px',
-                                            borderRadius: 4,
-                                            userSelect: 'none',
-                                        }}
-                                    >
-                                        {el.text}
-                                    </div>
-                                ))}
-
-                                {/* Draggable stickers */}
-                                {(template.stickers || []).map((stk) => (
-                                    <div
-                                        key={stk.id}
-                                        onMouseDown={(e) => startDrag(e, stk.id, stk.x, stk.y)}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSelectedStickerId(stk.id);
-                                            setActiveTab('stickers');
-                                        }}
-                                        className={`absolute cursor-move select-none ${selectedStickerId === stk.id ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-transparent' : ''}`}
-                                        style={{
-                                            left: `${stk.x}%`,
-                                            top: `${stk.y}%`,
-                                            width: stk.width,
-                                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
-                                            zIndex: 20,
-                                        }}
-                                    >
-                                        <img
-                                            src={stk.src}
-                                            alt="sticker"
-                                            className="w-full h-auto drop-shadow-md pointer-events-none"
-                                        />
-                                    </div>
-                                ))}
-
-                                {/* Watermark */}
-                                {template.watermarkText && (
-                                    <div
-                                        className="absolute bottom-2 left-0 right-0 text-center pointer-events-none"
-                                        style={{
-                                            fontSize: 10,
-                                            opacity: 0.3,
-                                            letterSpacing: 2,
-                                            textTransform: 'uppercase',
-                                            color: template.background.includes('linear') || template.background.startsWith('#1') || template.background.startsWith('#0')
-                                                ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.4)',
-                                        }}
-                                    >
-                                        {template.watermarkText}
-                                    </div>
-                                )}
+                                {/* Info */}
+                                <p className="text-sm text-gray-500 mt-4">
+                                    <span className="font-semibold text-gray-900">{template.name}</span>
+                                    {' · '}{template.layout.rows}×{template.layout.cols} grid · {template.slots.length} photo{template.slots.length !== 1 ? 's' : ''}
+                                    {' · '}{template.textElements.length} text element{template.textElements.length !== 1 ? 's' : ''}
+                                </p>
+                                <p className="text-xs text-gray-400 mt-1">Click text to select · Drag to reposition</p>
                             </div>
-
-                            {/* Info */}
-                            <p className="text-sm text-gray-500 mt-4">
-                                <span className="font-semibold text-gray-900">{template.name}</span>
-                                {' · '}{template.layout.rows}×{template.layout.cols} grid · {template.slots.length} photo{template.slots.length !== 1 ? 's' : ''}
-                                {' · '}{template.textElements.length} text element{template.textElements.length !== 1 ? 's' : ''}
-                            </p>
-                            <p className="text-xs text-gray-400 mt-1">Click text to select · Drag to reposition</p>
                         </div>
                     </div>
                 </div>
