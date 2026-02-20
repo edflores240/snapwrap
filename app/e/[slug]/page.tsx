@@ -246,30 +246,7 @@ export default function PublicBoothPage() {
         // Assuming uniform grid:
         const rows = selectedTemplate.layout.rows;
         const cols = selectedTemplate.layout.cols;
-        const gap = selectedTemplate.gap;
-        const pad = selectedTemplate.padding;
-
-        // Calculate cell aspect ratio based on reference width (420)
-        // (Similar logic to render)
-        const refW = 420;
-        const refH = refW * (rows > cols ? 3 / 2 : 9 / 16); // 3:2 portrait, 16:9 landscape
-        const padPctX = (pad / refW) * 100;
-        const gapPctX = (gap / refW) * 100;
-        const gridW = 100 - (padPctX * 2);
-        const cellW = (gridW - (gapPctX * (cols - 1))) / cols;
-
-        const padPctY = (pad / refH) * 100;
-        const gapPctY = (gap / refH) * 100;
-        const gridH = 100 - (padPctY * 2);
-        const cellH = (gridH - (gapPctY * (rows - 1))) / rows;
-
-        // Convert % back to Ratio: (cellW * refW) / (cellH * refH)
-        // Or simpler: cellW % of refW / cellH % of refH
-        // Ratio = (cellW/100 * refW) / (cellH/100 * refH)
-        const slotWidth = (cellW / 100) * refW;
-        const slotHeight = (cellH / 100) * refH;
-
-        const targetRatio = slotWidth / slotHeight;
+        const targetRatio = rows > cols ? 3 / 2 : 16 / 9;
 
         // 2. Video Source Ratio
         const videoRatio = video.videoWidth / video.videoHeight;
@@ -343,6 +320,10 @@ export default function PublicBoothPage() {
             }
 
             // Brief pause to show captured photo in slot
+            await wait(500);
+
+            // Zoom out to full view before moving to the next slot
+            setViewMode('full');
             await wait(500);
         }
 
@@ -921,14 +902,18 @@ export default function PublicBoothPage() {
                             className="relative w-full max-w-4xl rounded-3xl overflow-hidden bg-black border-4 border-white/10 shadow-2xl"
                             style={{
                                 aspectRatio: (() => {
+                                    const W = 420;
+                                    const PAD = selectedTemplate.padding;
+                                    const GAP = selectedTemplate.gap;
                                     const cols = selectedTemplate.layout.cols;
                                     const rows = selectedTemplate.layout.rows;
+                                    const gridW = W - PAD * 2;
+                                    const slotW = (gridW - GAP * (cols - 1)) / cols;
                                     const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
-
-                                    // Calculate container aspect ratio based on slot dimensions
-                                    const containerWidth = cols;
-                                    const containerHeight = rows * (1 / slotAspectRatio);
-                                    return `${containerWidth} / ${containerHeight}`;
+                                    const slotH = slotW / slotAspectRatio;
+                                    const gridH = slotH * rows + GAP * (rows - 1);
+                                    const H = gridH + PAD * 2 + 60; // 60 for watermark
+                                    return `${W} / ${H}`;
                                 })()
                             }}
                         >
@@ -1018,18 +1003,22 @@ export default function PublicBoothPage() {
                                         const pad = selectedTemplate.padding;
                                         const gap = selectedTemplate.gap;
 
-                                        // Use same calc as standardizer (420 ref)
-                                        const refW = 420;
-                                        const refH = refW * (rows > cols ? 3 / 2 : 9 / 16); // 3:2 portrait, 16:9 landscape
-                                        const padPctX = (pad / refW) * 100;
-                                        const padPctY = (pad / refH) * 100;
-                                        const gapPctX = (gap / refW) * 100;
-                                        const gapPctY = (gap / refH) * 100;
+                                        // Use identical exact mathematical logic as generateComposite
+                                        const W = 420;
+                                        const gridW = W - pad * 2;
+                                        const slotW = (gridW - gap * (cols - 1)) / cols;
+                                        const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
+                                        const slotH = slotW / slotAspectRatio;
+                                        const gridH = slotH * rows + gap * (rows - 1);
+                                        const H = gridH + pad * 2 + 60;
 
-                                        const gridW = 100 - (padPctX * 2);
-                                        const gridH = 100 - (padPctY * 2);
-                                        const cellW = (gridW - (gapPctX * (cols - 1))) / cols;
-                                        const cellH = (gridH - (gapPctY * (rows - 1))) / rows;
+                                        const padPctX = (pad / W) * 100;
+                                        const padPctY = (pad / H) * 100;
+                                        const gapPctX = (gap / W) * 100;
+                                        const gapPctY = (gap / H) * 100;
+
+                                        const cellW = (slotW / W) * 100;
+                                        const cellH = (slotH / H) * 100;
 
                                         const r = Math.floor(i / cols);
                                         const c = i % cols;
@@ -1190,13 +1179,18 @@ export default function PublicBoothPage() {
                             style={{
                                 width: 'min(90vw, 600px)',
                                 aspectRatio: (() => {
+                                    const W = 420;
+                                    const PAD = selectedTemplate.padding;
+                                    const GAP = selectedTemplate.gap;
                                     const cols = selectedTemplate.layout.cols;
                                     const rows = selectedTemplate.layout.rows;
+                                    const gridW = W - PAD * 2;
+                                    const slotW = (gridW - GAP * (cols - 1)) / cols;
                                     const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
-
-                                    const containerWidth = cols;
-                                    const containerHeight = rows * (1 / slotAspectRatio);
-                                    return `${containerWidth} / ${containerHeight}`;
+                                    const slotH = slotW / slotAspectRatio;
+                                    const gridH = slotH * rows + GAP * (rows - 1);
+                                    const H = gridH + PAD * 2 + 60; // 60 for watermark
+                                    return `${W} / ${H}`;
                                 })(),
                                 containerType: 'inline-size', // Enable cqw units
                             }}
@@ -1222,17 +1216,22 @@ export default function PublicBoothPage() {
                                     const pad = selectedTemplate.padding;
                                     const gap = selectedTemplate.gap;
 
-                                    const refW = 420;
-                                    const refH = refW * (rows > cols ? 3 / 2 : 9 / 16); // 3:2 portrait, 16:9 landscape
-                                    const padPctX = (pad / refW) * 100;
-                                    const padPctY = (pad / refH) * 100;
-                                    const gapPctX = (gap / refW) * 100;
-                                    const gapPctY = (gap / refH) * 100;
+                                    const W = 420;
+                                    const gridW = W - pad * 2;
+                                    const slotW = (gridW - gap * (cols - 1)) / cols;
+                                    const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
+                                    const slotH = slotW / slotAspectRatio;
+                                    const gridH = slotH * rows + gap * (rows - 1);
+                                    const H = gridH + pad * 2 + 60;
 
-                                    const gridW = 100 - (padPctX * 2);
-                                    const gridH = 100 - (padPctY * 2);
-                                    const cellW = (gridW - (gapPctX * (cols - 1))) / cols;
-                                    const cellH = (gridH - (gapPctY * (rows - 1))) / rows;
+                                    const padPctX = (pad / W) * 100;
+                                    const padPctY = (pad / H) * 100;
+                                    const gapPctX = (gap / W) * 100;
+                                    const gapPctY = (gap / H) * 100;
+
+                                    const cellW = (slotW / W) * 100;
+                                    const cellH = (slotH / H) * 100;
+
 
                                     const r = Math.floor(i / cols);
                                     const c = i % cols;
