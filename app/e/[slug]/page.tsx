@@ -1013,7 +1013,7 @@ export default function PublicBoothPage() {
                                         const H = gridH + pad * 2 + 60;
 
                                         const padPctX = (pad / W) * 100;
-                                        const padPctY = (pad / H) * 100;
+                                        const padPctY = ((pad + 30) / H) * 100; // Add 30 to center vertically, matching generateComposite
                                         const gapPctX = (gap / W) * 100;
                                         const gapPctY = (gap / H) * 100;
 
@@ -1225,7 +1225,7 @@ export default function PublicBoothPage() {
                                     const H = gridH + pad * 2 + 60;
 
                                     const padPctX = (pad / W) * 100;
-                                    const padPctY = (pad / H) * 100;
+                                    const padPctY = ((pad + 30) / H) * 100; // Add 30 to center vertically, matching generateComposite
                                     const gapPctX = (gap / W) * 100;
                                     const gapPctY = (gap / H) * 100;
 
