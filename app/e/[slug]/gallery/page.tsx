@@ -82,6 +82,9 @@ export default function PublicGalleryPage() {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [isHovered, setIsHovered] = useState(false);
 
+    // Download State
+    const [downloading, setDownloading] = useState(false);
+
     useEffect(() => {
         if (params.slug) fetchEventAndPhotos();
     }, [params.slug]);
@@ -110,6 +113,28 @@ export default function PublicGalleryPage() {
             console.error('Error loading gallery:', error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleDownload = async (url: string) => {
+        if (!url || downloading) return;
+        setDownloading(true);
+        try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = `snapwrap-${Date.now()}.jpg`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(objectUrl);
+        } catch (error) {
+            // Fallback: open in new tab
+            window.open(url, '_blank');
+        } finally {
+            setDownloading(false);
         }
     };
 
@@ -304,7 +329,24 @@ export default function PublicGalleryPage() {
                         />
                         <div className="absolute bottom-10 flex gap-6" onClick={(e) => e.stopPropagation()}>
                             <button onClick={(e) => { e.stopPropagation(); setFullscreenIndex((fullscreenIndex - 1 + photos.length) % photos.length); }} className="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center backdrop-blur-md">←</button>
-                            <a href={photos[fullscreenIndex].final_url || photos[fullscreenIndex].image_url} download className="px-8 py-3 rounded-full bg-white text-black font-bold hover:bg-gray-200 transition-colors shadow-lg flex items-center gap-2">Download</a>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    const url = photos[fullscreenIndex].final_url || photos[fullscreenIndex].image_url;
+                                    handleDownload(url);
+                                }}
+                                disabled={downloading}
+                                className="px-8 py-3 rounded-full bg-white text-black font-bold hover:bg-gray-200 transition-colors shadow-lg flex items-center justify-center gap-2 min-w-[140px] disabled:opacity-50"
+                            >
+                                {downloading ? (
+                                    <>
+                                        <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                                        Downloading...
+                                    </>
+                                ) : (
+                                    'Download'
+                                )}
+                            </button>
                             <button onClick={(e) => { e.stopPropagation(); setFullscreenIndex((fullscreenIndex + 1) % photos.length); }} className="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center backdrop-blur-md">→</button>
                         </div>
                     </motion.div>
