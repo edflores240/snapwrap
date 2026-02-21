@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 
 interface PhotoData {
@@ -10,6 +11,9 @@ interface PhotoData {
     image_url: string;
     created_at: string;
     event_id: string;
+    events?: {
+        slug: string;
+    } | null;
 }
 
 export default function DownloadPage() {
@@ -27,7 +31,7 @@ export default function DownloadPage() {
         try {
             const { data, error } = await supabase
                 .from('photos')
-                .select('*')
+                .select('*, events(slug)')
                 .eq('id', params.photoId)
                 .single();
 
@@ -132,12 +136,24 @@ export default function DownloadPage() {
                     </button>
 
                     {/* Timestamp */}
-                    <p className="text-sm text-gray-600 mt-6">
+                    <p className="text-sm text-gray-600 mt-6 mb-8">
                         Taken {new Date(photo.created_at).toLocaleDateString('en-US', {
                             weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
                             hour: 'numeric', minute: '2-digit',
                         })}
                     </p>
+
+                    {/* View Gallery Link */}
+                    {photo.events?.slug && (
+                        <div className="mb-6">
+                            <Link
+                                href={`/e/${photo.events.slug}/gallery`}
+                                className="inline-block px-6 py-3 rounded-full border border-indigo-500/30 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 hover:border-indigo-500/50 transition-all"
+                            >
+                                📸 View Full Event Gallery
+                            </Link>
+                        </div>
+                    )}
 
                     {/* Branding */}
                     <div className="mt-12 text-xs text-gray-700">
