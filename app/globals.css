@@ -24,29 +24,35 @@
   /* Animations */
   --animate-glow: glow-pulse 3s ease-in-out infinite;
   --animate-float: float 3s ease-in-out infinite;
+  --animate-countPulse: count-pulse 1s ease-in-out infinite;
+  --animate-fadeIn: fade-in 0.3s ease-out;
+  --animate-flash: flash 0.5s ease-out;
 
   @keyframes glow-pulse {
-
-    0%,
-    100% {
-      box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
-    }
-
-    50% {
-      box-shadow: 0 0 40px rgba(139, 92, 246, 0.6);
-    }
+    0%, 100% { box-shadow: 0 0 20px rgba(139, 92, 246, 0.3); }
+    50% { box-shadow: 0 0 40px rgba(139, 92, 246, 0.6); }
   }
 
   @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+  }
 
-    0%,
-    100% {
-      transform: translateY(0px);
-    }
+  @keyframes count-pulse {
+    0% { transform: scale(0.8); opacity: 0; }
+    50% { opacity: 1; }
+    100% { transform: scale(1.2); opacity: 0; }
+  }
 
-    50% {
-      transform: translateY(-10px);
-    }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes flash {
+    0% { opacity: 0; }
+    10% { opacity: 1; }
+    100% { opacity: 0; }
   }
 }
 

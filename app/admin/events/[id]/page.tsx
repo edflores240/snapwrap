@@ -33,6 +33,7 @@ export default function EventDetailPage() {
         countdownSeconds: 3,
         autoSnap: true,
         themeColor: '#6366f1',
+        gesturesEnabled: true,
     });
     const [savingBooth, setSavingBooth] = useState(false);
     const [boothPhotos, setBoothPhotos] = useState<any[]>([]);
@@ -55,6 +56,30 @@ export default function EventDetailPage() {
     const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
+
+    // Print Studio state
+    const [showPrintStudio, setShowPrintStudio] = useState(false);
+    const [printStudioUrls, setPrintStudioUrls] = useState<string[]>([]);
+    const [selectedLayout, setSelectedLayout] = useState<'1-up' | '2-up-v' | '2-up-h' | '4-up'>('1-up');
+    const [slotAssignments, setSlotAssignments] = useState<number[]>([0, 1, 2, 3]);
+    const [activePoolIndex, setActivePoolIndex] = useState<number | null>(null);
+
+    // Initialize/sync slot assignments when pool or layout changes
+    useEffect(() => {
+        if (showPrintStudio && printStudioUrls.length > 0) {
+            const numSlots = selectedLayout === '1-up' ? 1 : selectedLayout === '4-up' ? 4 : 2;
+            setSlotAssignments(prev => {
+                const next = Array.isArray(prev) ? [...prev] : [];
+                // If the assignments don't match the current pool size constraints, fix them
+                for (let j = 0; j < numSlots; j++) {
+                    if (next[j] === undefined || next[j] >= printStudioUrls.length) {
+                        next[j] = j % printStudioUrls.length;
+                    }
+                }
+                return next.slice(0, numSlots);
+            });
+        }
+    }, [selectedLayout, showPrintStudio, printStudioUrls.length]);
 
     const handleToggleSelect = (id: string) => {
         setSelectedPhotos(prev =>
@@ -105,6 +130,67 @@ export default function EventDetailPage() {
         } finally {
             setActionLoading(false);
         }
+    };
+    
+    const handlePrint = (photoUrl: string) => {
+        setPrintStudioUrls([photoUrl]);
+        setActivePoolIndex(0); // Auto-select the only photo
+        setShowPrintStudio(true);
+    };
+
+    const executePrint = (urls: string[], layout: '1-up' | '2-up-v' | '2-up-h' | '4-up') => {
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) return;
+
+        let gridStyles = '';
+        if (layout === '1-up') {
+            gridStyles = 'grid-template-columns: 1fr;';
+        } else if (layout === '2-up-v') {
+            gridStyles = 'grid-template-columns: 1fr 1fr;';
+        } else if (layout === '2-up-h') {
+            gridStyles = 'grid-template-rows: 1fr 1fr;';
+        } else if (layout === '4-up') {
+            gridStyles = 'grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;';
+        }
+
+        printWindow.document.write(`
+            <html>
+                <head>
+                    <title>SnapWrap Print Studio</title>
+                    <style>
+                        @page { margin: 0; size: 4in 6in; }
+                        body { 
+                            margin: 0; 
+                            padding: 0.1in; 
+                            display: grid; 
+                            ${gridStyles} 
+                            gap: 0.1in; 
+                            height: 6in; 
+                            width: 4in; 
+                            background: white; 
+                            box-sizing: border-box; 
+                        }
+                        .print-item { 
+                            width: 100%; 
+                            height: 100%; 
+                            display: flex; 
+                            align-items: center; 
+                            justify-content: center; 
+                            overflow: hidden; 
+                        }
+                        img { 
+                            max-width: 100%; 
+                            max-height: 100%; 
+                            object-fit: contain; 
+                        }
+                    </style>
+                </head>
+                <body onload="window.print(); setTimeout(() => window.close(), 1000);">
+                    ${urls.map(url => `<div class="print-item"><img src="${url}" /></div>`).join('')}
+                </body>
+            </html>
+        `);
+        printWindow.document.close();
     };
 
     const handleTogglePublish = async (publish: boolean) => {
@@ -538,6 +624,27 @@ export default function EventDetailPage() {
                                 </div>
 
                                 <div>
+                                    <label className="block text-sm font-medium text-gray-900 mb-2">Hand Gesture Control</label>
+                                    <div className="flex items-center gap-3">
+                                        <button
+                                            onClick={() => setBoothSettings({ ...boothSettings, gesturesEnabled: !(boothSettings as any).gesturesEnabled })}
+                                            className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${(boothSettings as any).gesturesEnabled ? 'bg-indigo-600' : 'bg-gray-300'}`}
+                                        >
+                                            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${(boothSettings as any).gesturesEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                                        </button>
+                                        <span className="text-sm font-medium text-gray-700">
+                                            {(boothSettings as any).gesturesEnabled ? '🤚 Gestures On' : '🖱️ Buttons Only'}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        {(boothSettings as any).gesturesEnabled
+                                            ? 'Guests can use 👍 thumbs-up to snap and ✋ open palm to retake — tap buttons still work'
+                                            : 'Guests use on-screen buttons only — MediaPipe will not load'
+                                        }
+                                    </p>
+                                </div>
+
+                                <div>
                                     <label className="block text-sm font-medium text-gray-900 mb-2">Theme Color</label>
                                     <div className="flex items-center gap-3">
                                         {['#6366f1', '#ec4899', '#f97316', '#10b981', '#8b5cf6', '#06b6d4'].map(color => (
@@ -636,6 +743,25 @@ export default function EventDetailPage() {
                                                 <Button
                                                     variant="secondary"
                                                     size="sm"
+                                                    onClick={() => {
+                                                        const urls = selectedPhotos.map(id => {
+                                                            const p = boothPhotos.find(x => x.id === id);
+                                                            return p?.image_url || p?.final_url;
+                                                        }).filter(Boolean) as string[];
+                                                        // Filter for unique URLs to avoid "no change" confusion
+                                                        const uniqueUrls = Array.from(new Set(urls));
+                                                        setPrintStudioUrls(uniqueUrls);
+                                                        setActivePoolIndex(uniqueUrls.length > 0 ? 0 : null);
+                                                        setShowPrintStudio(true);
+                                                    }}
+                                                    disabled={selectedPhotos.length === 0 || actionLoading}
+                                                    className="text-xs ml-2 bg-orange-50 border-orange-200 text-orange-600 hover:bg-orange-100 hover:border-orange-300"
+                                                >
+                                                    🖨️ Print Studio
+                                                </Button>
+                                                <Button
+                                                    variant="secondary"
+                                                    size="sm"
                                                     onClick={handleDeleteSelected}
                                                     disabled={selectedPhotos.length === 0 || actionLoading}
                                                     className="text-xs ml-2 bg-red-50 border-red-200 text-red-600 hover:bg-red-100 hover:border-red-300"
@@ -701,6 +827,20 @@ export default function EventDetailPage() {
                                                 )}
                                             </div>
 
+                                            {/* Quick Actions (Visible on hover or touch) */}
+                                            <div className="absolute bottom-2 right-2 flex gap-1 z-10">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handlePrint(photo.image_url || photo.final_url);
+                                                    }}
+                                                    className="p-2 bg-white/90 backdrop-blur-md rounded-xl text-orange-600 shadow-lg border border-orange-100 hover:scale-110 active:scale-95 transition-all"
+                                                    title="Quick Print"
+                                                >
+                                                    🖨️
+                                                </button>
+                                            </div>
+
                                             {/* Selection Overlay */}
                                             {isSelectionMode && (
                                                 <div className={`absolute inset-0 flex items-center justify-center transition-colors ${selectedPhotos.includes(photo.id) ? 'bg-indigo-500/20' : 'bg-transparent hover:bg-black/10'
@@ -729,6 +869,16 @@ export default function EventDetailPage() {
                                                     >
                                                         ⬇
                                                     </a>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handlePrint(photo.image_url || photo.final_url);
+                                                        }}
+                                                        className="p-2 bg-white rounded-full text-orange-600 hover:bg-orange-50 transition-colors"
+                                                        title="Print"
+                                                    >
+                                                        🖨️
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>
@@ -832,6 +982,186 @@ export default function EventDetailPage() {
                     />
                 )
             }
+            {/* Print Studio Modal */}
+            {showPrintStudio && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <Card className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border-white/10">
+                        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-white">
+                            <div>
+                                <h2 className="text-xl font-bold text-gray-900">🖨️ Print Studio</h2>
+                                <p className="text-sm text-gray-500">Configure your layout for 4x6 paper</p>
+                            </div>
+                            <Button variant="ghost" onClick={() => setShowPrintStudio(false)}>✕</Button>
+                        </div>
+
+                        <div className="flex-1 overflow-hidden flex flex-col md:flex-row bg-gray-50">
+                            {/* Layout Selection */}
+                            <div className="w-full md:w-72 p-6 border-r border-gray-200 space-y-6 overflow-y-auto">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Layout Style</label>
+                                    <div className="space-y-2">
+                                        {[
+                                            { id: '1-up', label: 'Single (1-Up)', icon: '⬜' },
+                                            { id: '2-up-v', label: 'Duplex Vertical (2-Up)', icon: '▯▯' },
+                                            { id: '2-up-h', label: 'Duplex Horizontal (2-Up)', icon: '▭/▭' },
+                                            { id: '4-up', label: 'Quad (4-Up)', icon: '田' },
+                                        ].map(layout => (
+                                            <button
+                                                key={layout.id}
+                                                onClick={() => setSelectedLayout(layout.id as any)}
+                                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all ${selectedLayout === layout.id
+                                                    ? 'border-orange-500 bg-orange-50 text-orange-900 shadow-sm'
+                                                    : 'border-white bg-white text-gray-600 hover:border-gray-200'
+                                                    }`}
+                                            >
+                                                <span className="text-lg">{layout.icon}</span>
+                                                <span className="text-sm font-semibold">{layout.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+                                    <p className="text-[11px] text-blue-700 leading-relaxed">
+                                        💡 <strong>Tip:</strong> Duplex Vertical is perfect for 2x6 photo strips. Quad is great for individual snaps.
+                                    </p>
+                                </div>
+                                
+                                <div className="pt-4 flex flex-col gap-4">
+                                    <div>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Event Media Pool</label>
+                                            <span className="text-[10px] text-gray-400">{boothPhotos.length} photos</span>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-2 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                                            {boothPhotos.map((photo, idx) => {
+                                                const url = photo.image_url || photo.final_url;
+                                                return (
+                                                    <button
+                                                        key={photo.id}
+                                                        onClick={() => setActivePoolIndex(idx)}
+                                                        className={`aspect-square rounded-lg border-2 overflow-hidden transition-all relative ${activePoolIndex === idx
+                                                            ? 'border-orange-500 ring-2 ring-orange-200 scale-105 z-10'
+                                                            : 'border-white hover:border-gray-300'
+                                                            }`}
+                                                    >
+                                                        <img src={url} className="w-full h-full object-cover" alt="Gallery" />
+                                                        {slotAssignments.includes(idx) && (
+                                                            <div className="absolute top-1 right-1 bg-green-500 w-2 h-2 rounded-full border border-white shadow-sm" />
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    <div className="pt-2 grid grid-cols-2 gap-2">
+                                        <Button 
+                                            variant="secondary" 
+                                            size="sm" 
+                                            className="text-[10px] py-2 bg-white border-gray-200"
+                                            onClick={() => {
+                                                const shuffled = [...printStudioUrls].sort(() => Math.random() - 0.5);
+                                                setPrintStudioUrls(shuffled);
+                                                setActivePoolIndex(null);
+                                            }}
+                                        >
+                                            🔀 Shuffle Pool
+                                        </Button>
+                                        <Button 
+                                            variant="secondary" 
+                                            size="sm" 
+                                            className="text-[10px] py-2 bg-white border-gray-200"
+                                            onClick={() => {
+                                                const numSlots = selectedLayout === '1-up' ? 1 : selectedLayout === '4-up' ? 4 : 2;
+                                                const randomIdxs = Array.from({ length: numSlots }).map(() => Math.floor(Math.random() * boothPhotos.length));
+                                                setSlotAssignments(randomIdxs);
+                                            }}
+                                        >
+                                            🎲 Auto-Fill
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Preview Area */}
+                            <div className="flex-1 p-8 flex flex-col items-center justify-center overflow-y-auto">
+                                <div className="text-xs font-bold text-gray-400 mb-2 uppercase tracking-[0.2em]">4x6 Paper Preview</div>
+                                <p className="text-[10px] text-gray-400 mb-6 italic">Click any slot to swap image</p>
+                                <div 
+                                    className={`bg-white shadow-2xl border-8 border-white rounded shadow-[0_20px_50px_rgba(0,0,0,0.1)] overflow-hidden p-2 grid gap-2 transition-all duration-500`}
+                                    style={{ 
+                                        width: 'min(100%, 350px)',
+                                        aspectRatio: '4 / 6',
+                                        gridTemplateColumns: selectedLayout === '1-up' ? '1fr' : selectedLayout === '2-up-v' ? '1fr 1fr' : selectedLayout === '2-up-h' ? '1fr' : '1fr 1fr',
+                                        gridTemplateRows: selectedLayout === '2-up-h' ? '1fr 1fr' : selectedLayout === '4-up' ? '1fr 1fr' : '1fr'
+                                    }}
+                                >
+                                    {Array.from({ length: selectedLayout === '1-up' ? 1 : selectedLayout === '4-up' ? 4 : 2 }).map((_, i) => {
+                                        const poolIndex = slotAssignments[i];
+                                        const photo = poolIndex !== undefined ? boothPhotos[poolIndex] : null;
+                                        const url = photo?.image_url || photo?.final_url;
+                                        
+                                        return (
+                                            <button 
+                                                key={`slot-${selectedLayout}-${i}`} 
+                                                className={`flex items-center justify-center overflow-hidden rounded-sm border-2 transition-all cursor-pointer group/slot relative active:scale-[0.95] ${
+                                                    activePoolIndex !== null ? 'hover:border-orange-500 hover:bg-orange-50' : 'hover:border-gray-400'
+                                                } ${url ? 'bg-white border-gray-100' : 'bg-gray-50 border-dashed border-gray-300'}`}
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    if (activePoolIndex !== null) {
+                                                        setSlotAssignments(prev => {
+                                                            const next = [...prev];
+                                                            next[i] = activePoolIndex;
+                                                            return next;
+                                                        });
+                                                    }
+                                                }}
+                                            >
+                                                {url ? (
+                                                    <img src={url} alt="Preview" className="w-full h-full object-contain pointer-events-none" />
+                                                ) : (
+                                                    <div className="flex flex-col items-center gap-1 opacity-40 pointer-events-none">
+                                                        <span className="text-xl">📥</span>
+                                                        <span className="text-[10px] font-bold uppercase tracking-tighter">Place Image</span>
+                                                    </div>
+                                                )}
+
+                                                {/* Interaction Overlay */}
+                                                <div className="absolute inset-0 opacity-0 group-hover/slot:opacity-100 flex items-center justify-center pointer-events-none transition-opacity bg-black/5">
+                                                    <span className="bg-white/90 px-3 py-1.5 rounded-lg text-[10px] font-bold text-orange-600 shadow-md border border-orange-100">
+                                                        {activePoolIndex !== null ? 'Click to Place' : 'Select photo from pool'}
+                                                    </span>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="px-6 py-4 border-t border-gray-100 bg-white flex items-center justify-between">
+                            <Button variant="ghost" onClick={() => setShowPrintStudio(false)}>Cancel</Button>
+                            <Button 
+                                variant="primary" 
+                                className="bg-orange-600 hover:bg-orange-700 text-white px-8"
+                                onClick={() => {
+                                    const finalUrls = slotAssignments.map(idx => {
+                                        const p = boothPhotos[idx];
+                                        return p?.image_url || p?.final_url;
+                                    }).filter(Boolean);
+                                    executePrint(finalUrls, selectedLayout);
+                                    setShowPrintStudio(false);
+                                }}
+                            >
+                                🖨️ Print Now
+                            </Button>
+                        </div>
+                    </Card>
+                </div>
+            )}
         </div >
     );
 }

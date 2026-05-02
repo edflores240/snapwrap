@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { TemplateConfig, PRESET_TEMPLATES } from '@/components/templates/TemplateDesigner';
 import TemplatePreview from '@/components/templates/TemplatePreview';
 import QRCode from 'react-qr-code';
+import { GestureDetector, GestureMode } from '@/components/camera/GestureDetector';
 
 interface Event {
     id: string;
@@ -24,6 +25,7 @@ interface BoothSettings {
     countdownSeconds: number;
     autoSnap: boolean;
     themeColor: string;
+    gesturesEnabled: boolean;
 }
 
 const DEFAULT_BOOTH_SETTINGS: BoothSettings = {
@@ -31,6 +33,7 @@ const DEFAULT_BOOTH_SETTINGS: BoothSettings = {
     countdownSeconds: 3,
     autoSnap: true,
     themeColor: '#6366f1',
+    gesturesEnabled: true,
 };
 
 // Helper to derive lighter/darker shades from a hex color
@@ -65,11 +68,16 @@ export default function PublicBoothPage() {
     const [selectedTemplate, setSelectedTemplate] = useState<TemplateConfig | null>(null);
     const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
     const [currentSlotIndex, setCurrentSlotIndex] = useState(0);
-    const [viewMode, setViewMode] = useState<'full' | 'zoomed'>('full');
+    // Sub-state within the 'capture' step: live camera | counting down | previewing just-taken photo
+    const [captureSubState, setCaptureSubState] = useState<'live' | 'countdown' | 'preview'>('live');
     const [countdown, setCountdown] = useState<number | null>(null);
     const [flashActive, setFlashActive] = useState(false);
-    const [isAutoSnapping, setIsAutoSnapping] = useState(false);
-    const [betweenShots, setBetweenShots] = useState(false);
+    // Gesture hold feedback (driven by GestureDetector's onHoldProgress)
+    const [gestureHoldProgress, setGestureHoldProgress] = useState(0);
+    const [gestureHoldTarget, setGestureHoldTarget] = useState<'retake' | 'confirm' | null>(null);
+    // Auto-keep: after a snap, photo auto-advances after AUTO_KEEP_MS unless retaken
+    const [autoKeepProgress, setAutoKeepProgress] = useState(0);
+    const autoKeepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // QR / Upload state
     const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -79,23 +87,13 @@ export default function PublicBoothPage() {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
-    const autoSnapRef = useRef(false);
-    const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
-
-    const clearTimeouts = useCallback(() => {
-        timeoutsRef.current.forEach(clearTimeout);
-        timeoutsRef.current = [];
-    }, []);
-
-    const wait = useCallback((ms: number) => {
-        return new Promise<void>((resolve) => {
-            const id = setTimeout(() => {
-                resolve();
-                timeoutsRef.current = timeoutsRef.current.filter(t => t !== id);
-            }, ms);
-            timeoutsRef.current.push(id);
-        });
-    }, []);
+    const countdownRef = useRef<NodeJS.Timeout | null>(null);
+    // Dedicated hidden video for GestureDetector — always has the stream,
+    // independent of whether the slot's visible <video> is mounted or not
+    const gestureVideoRef = useRef<HTMLVideoElement>(null);
+    // Separate hidden video element used for gesture detection on the Review step
+    const reviewVideoRef = useRef<HTMLVideoElement>(null);
+    const reviewStreamRef = useRef<MediaStream | null>(null);
 
     // Derived theme values
     const tc = boothSettings.themeColor || '#6366f1';
@@ -141,7 +139,7 @@ export default function PublicBoothPage() {
         if (params.slug) fetchEvent();
         return () => {
             stopCamera();
-            clearTimeouts();
+            if (countdownRef.current) clearTimeout(countdownRef.current);
         };
     }, [params.slug]);
 
@@ -203,6 +201,11 @@ export default function PublicBoothPage() {
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
             }
+            // Always pipe stream to the dedicate gesture video too
+            if (gestureVideoRef.current) {
+                gestureVideoRef.current.srcObject = stream;
+                gestureVideoRef.current.play().catch(() => { });
+            }
         } catch (err) {
             console.error('Camera error:', err);
             alert('Could not access camera. Please allow camera permissions.');
@@ -218,10 +221,35 @@ export default function PublicBoothPage() {
 
     // Re-attach stream when step changes (because video element remounts)
     useEffect(() => {
-        if ((step === 'mirror' || step === 'capture') && videoRef.current && streamRef.current) {
-            videoRef.current.srcObject = streamRef.current;
+        if ((step === 'mirror' || step === 'capture') && streamRef.current) {
+            if (videoRef.current) videoRef.current.srcObject = streamRef.current;
+            // Keep gesture video in sync too
+            if (gestureVideoRef.current) {
+                gestureVideoRef.current.srcObject = streamRef.current;
+                gestureVideoRef.current.play().catch(() => { });
+            }
         }
     }, [step]);
+
+    // Start/stop a lightweight background camera for gesture detection on Review step
+    useEffect(() => {
+        if (step === 'review') {
+            // Start hidden gesture camera
+            navigator.mediaDevices.getUserMedia({
+                video: { width: 320, height: 240, deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
+                audio: false,
+            }).then(stream => {
+                reviewStreamRef.current = stream;
+                if (reviewVideoRef.current) {
+                    reviewVideoRef.current.srcObject = stream;
+                    reviewVideoRef.current.play().catch(() => { });
+                }
+            }).catch(() => { }); // Silently fail — gesture is nice-to-have
+        } else {
+            reviewStreamRef.current?.getTracks().forEach(t => t.stop());
+            reviewStreamRef.current = null;
+        }
+    }, [step, selectedDeviceId]);
 
     const stopCamera = () => {
         streamRef.current?.getTracks().forEach(t => t.stop());
@@ -233,7 +261,16 @@ export default function PublicBoothPage() {
         videoRef.current = node;
         if (node && streamRef.current) {
             node.srcObject = streamRef.current;
-            node.play().catch(() => { }); // Ensure play
+            node.play().catch(() => { });
+        }
+    }, []);
+
+    // Callback ref for the always-on hidden gesture video
+    const setGestureVideoRef = useCallback((node: HTMLVideoElement | null) => {
+        gestureVideoRef.current = node;
+        if (node && streamRef.current) {
+            node.srcObject = streamRef.current;
+            node.play().catch(() => { });
         }
     }, []);
 
@@ -277,124 +314,139 @@ export default function PublicBoothPage() {
         return canvas.toDataURL('image/jpeg', 0.95);
     }, [selectedTemplate]);
 
-    // ── Auto-Snap Flow ────────────────────────────────────────────────
-
-    const runAutoSnap = useCallback(async (template: TemplateConfig) => {
-        setIsAutoSnapping(true);
-        autoSnapRef.current = true;
-        const photos: string[] = [];
-
-        // Initial delay to show full template
-        setViewMode('full');
-        await wait(1000);
-
-        for (let i = 0; i < template.slots.length; i++) {
-            if (!autoSnapRef.current) break;
-
-            setCurrentSlotIndex(i);
-
-            // Zoom in
-            setViewMode('zoomed');
-            await wait(1200); // Wait for zoom transition
-
-            // Countdown using settings
-            const cdSeconds = boothSettings.countdownSeconds || 3;
-            for (let c = cdSeconds; c > 0; c--) {
-                if (!autoSnapRef.current) break;
-                setCountdown(c);
-                await wait(1000);
-            }
-            setCountdown(null);
-
-            if (!autoSnapRef.current) break;
-
-            // Flash + capture
-            setFlashActive(true);
-            await wait(150);
-            const photo = takePhoto();
-            setFlashActive(false);
-
-            if (photo) {
-                photos.push(photo);
-                setCapturedPhotos([...photos]);
-            }
-
-            // Brief pause to show captured photo in slot
-            await wait(500);
-
-            // Zoom out to full view before moving to the next slot
-            setViewMode('full');
-            await wait(500);
-        }
-
-        if (autoSnapRef.current && photos.length === template.slots.length) {
-            setViewMode('full');
-            await wait(500);
-            // All photos captured — go to review
-            setStep('review');
-            stopCamera();
-        }
-
-        setIsAutoSnapping(false);
-        setCountdown(null);
-        setViewMode('full');
-    }, [takePhoto, boothSettings.countdownSeconds, wait]);
-
     // ── Step Handlers ──────────────────────────────────────────────────
 
     const handleSelectTemplate = async (tpl: TemplateConfig) => {
         setSelectedTemplate(tpl);
         setCapturedPhotos([]);
         setCurrentSlotIndex(0);
-
-        // Go to Mirror Step first!
+        setCaptureSubState('live');
         setStep('mirror');
         await startCamera();
     };
 
     const handleMirrorReady = () => {
         setStep('capture');
-        // Auto-snap if enabled, otherwise wait for manual capture
-        if (boothSettings.autoSnap !== false && selectedTemplate) {
-            setTimeout(() => {
-                runAutoSnap(selectedTemplate);
-            }, 500);
-        }
+        setCaptureSubState('live');
     };
 
-    // Manual snap: take one photo at a time
-    const handleManualSnap = () => {
-        if (!selectedTemplate) return;
-        setFlashActive(true);
-        setTimeout(() => {
-            const photo = takePhoto();
-            setFlashActive(false);
-            if (photo) {
-                const updated = [...capturedPhotos, photo];
-                setCapturedPhotos(updated);
-                setCurrentSlotIndex(updated.length);
-                if (updated.length === selectedTemplate.slots.length) {
-                    setStep('review');
-                    stopCamera();
-                }
+    // ── One-by-One Capture ─────────────────────────────────────────────
+
+    /**
+     * handleSnapSlot — triggered by the "Snap!" button.
+     * Runs a 3-2-1 countdown then captures the current slot.
+     */
+    const handleSnapSlot = useCallback(() => {
+        if (captureSubState !== 'live') return;
+        setCaptureSubState('countdown');
+
+        const cdSeconds = boothSettings.countdownSeconds || 3;
+        setCountdown(cdSeconds);
+
+        let remaining = cdSeconds - 1;
+        const tick = () => {
+            if (remaining > 0) {
+                setCountdown(remaining);
+                remaining--;
+                countdownRef.current = setTimeout(tick, 1000);
+            } else {
+                // Fire!
+                setCountdown(null);
+                setFlashActive(true);
+                setTimeout(() => {
+                    const photo = takePhoto();
+                    setFlashActive(false);
+                    if (photo) {
+                        setCapturedPhotos(prev => {
+                            const next = [...prev];
+                            next[currentSlotIndex] = photo;
+                            return next;
+                        });
+                    }
+                    setCaptureSubState('preview');
+                }, 150);
             }
-        }, 150);
-    };
+        };
 
+        countdownRef.current = setTimeout(tick, 1000);
+    }, [captureSubState, boothSettings.countdownSeconds, takePhoto, currentSlotIndex]);
+
+    /**
+     * handleKeepSlot — user happy with the current photo.
+     * Advances to the next empty slot, or transitions to review.
+     */
+    const handleKeepSlot = useCallback(() => {
+        if (!selectedTemplate) return;
+        const nextIndex = currentSlotIndex + 1;
+        if (nextIndex >= selectedTemplate.slots.length) {
+            // All done → review
+            setStep('review');
+            stopCamera();
+        } else {
+            setCurrentSlotIndex(nextIndex);
+            setCaptureSubState('live');
+        }
+    }, [selectedTemplate, currentSlotIndex]);
+
+    /**
+     * handleRetakeSlot — user wants to redo the current slot.
+     * Clears just that slot and goes back to live camera.
+     */
+    const handleRetakeSlot = useCallback(() => {
+        if (countdownRef.current) clearTimeout(countdownRef.current);
+        // Cancel any in-progress auto-keep timer
+        if (autoKeepTimerRef.current) {
+            clearInterval(autoKeepTimerRef.current);
+            autoKeepTimerRef.current = null;
+        }
+        setAutoKeepProgress(0);
+        setCapturedPhotos(prev => {
+            const next = [...prev];
+            next[currentSlotIndex] = '';
+            return next;
+        });
+        setCountdown(null);
+        setCaptureSubState('live');
+    }, [currentSlotIndex]);
+
+    /** Auto-keep: once a photo is in preview, auto-advance after 2.5s */
+    const AUTO_KEEP_MS = 10000;
+    useEffect(() => {
+        if (captureSubState !== 'preview') {
+            if (autoKeepTimerRef.current) {
+                clearInterval(autoKeepTimerRef.current);
+                autoKeepTimerRef.current = null;
+            }
+            setAutoKeepProgress(0);
+            return;
+        }
+        let elapsed = 0;
+        const TICK = 50;
+        autoKeepTimerRef.current = setInterval(() => {
+            elapsed += TICK;
+            const pct = Math.min(100, (elapsed / AUTO_KEEP_MS) * 100);
+            setAutoKeepProgress(pct);
+            if (elapsed >= AUTO_KEEP_MS) {
+                clearInterval(autoKeepTimerRef.current!);
+                autoKeepTimerRef.current = null;
+                setAutoKeepProgress(0);
+                handleKeepSlot();
+            }
+        }, TICK);
+        return () => {
+            if (autoKeepTimerRef.current) clearInterval(autoKeepTimerRef.current);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [captureSubState, currentSlotIndex]);
+
+    /** Full retake from the review screen — goes back to slot 0. */
     const handleRetake = async () => {
-        autoSnapRef.current = false;
-        clearTimeouts();
-        setIsAutoSnapping(false);
         setCapturedPhotos([]);
         setCurrentSlotIndex(0);
+        setCaptureSubState('live');
         setDownloadUrl(null);
         setStep('capture');
         await startCamera();
-        if (selectedTemplate && boothSettings.autoSnap !== false) {
-            setTimeout(() => {
-                runAutoSnap(selectedTemplate);
-            }, 1000);
-        }
     };
 
     // ── Generate Composite + Upload + QR ───────────────────────────────
@@ -694,7 +746,7 @@ export default function PublicBoothPage() {
     // ── Render ────────────────────────────────────────────────────────
 
     return (
-        <div className="min-h-screen bg-gray-950 text-white relative overflow-hidden">
+        <div className="h-screen bg-gray-950 text-white relative overflow-hidden">
             {/* Subtle gradient bg */}
             <div className="fixed inset-0 pointer-events-none" style={{ background: themeBgSubtle }} />
 
@@ -716,7 +768,7 @@ export default function PublicBoothPage() {
                 }
                 @keyframes countPulse {
                     0% { transform: scale(0.5); opacity: 0; }
-                    50% { transform: scale(1.2); opacity: 1; }
+                    50% { transform: scale(3); opacity: 1; }
                     100% { transform: scale(1); opacity: 1; }
                 }
                 @keyframes qrGlow {
@@ -728,7 +780,7 @@ export default function PublicBoothPage() {
                 .animate-qrGlow { animation: qrGlow 2s ease-in-out infinite; }
             `}</style>
 
-            <div className="relative z-10 min-h-screen flex flex-col">
+            <div className="relative z-10 h-full flex flex-col overflow-y-auto">
                 {/* ── STEP: Welcome ─────────────────────────────────────── */}
                 {step === 'welcome' && (
                     <div className="flex-1 flex items-center justify-center px-6 animate-slideUp">
@@ -873,300 +925,430 @@ export default function PublicBoothPage() {
                     </div>
                 )}
 
-                {/* ── STEP: Capture (Auto-Snap) ────────────────────────── */}
-                {step === 'capture' && selectedTemplate && (
-                    <div className="flex-1 flex flex-col items-center justify-center px-6 py-8">
-                        {/* Progress bar */}
-                        <div className="w-full max-w-2xl mb-6">
-                            <div className="flex items-center justify-between mb-2">
-                                <h2 className="text-xl font-bold">
-                                    Photo {Math.min(currentSlotIndex + 1, selectedTemplate.slots.length)} of {selectedTemplate.slots.length}
-                                </h2>
-                                <span className="text-sm text-gray-400">
-                                    {isAutoSnapping ? '🔴 Recording...' : boothSettings.autoSnap !== false ? 'Ready' : 'Tap to capture'}
-                                </span>
-                            </div>
-                            <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full transition-all duration-500 rounded-full"
-                                    style={{
-                                        width: `${(capturedPhotos.length / selectedTemplate.slots.length) * 100}%`,
-                                        background: themeGradient,
-                                    }}
-                                />
-                            </div>
-                        </div>
+                {/* ── STEP: Capture (One-by-One) ────────────────────────── */}
+                {step === 'capture' && selectedTemplate && (() => {
+                    const W = 420;
+                    const pad = selectedTemplate.padding;
+                    const gap = selectedTemplate.gap;
+                    const cols = selectedTemplate.layout.cols;
+                    const rows = selectedTemplate.layout.rows;
+                    const gridW = W - pad * 2;
+                    const slotW = (gridW - gap * (cols - 1)) / cols;
+                    const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
+                    const slotH = slotW / slotAspectRatio;
+                    const gridH = slotH * rows + gap * (rows - 1);
+                    const H = gridH + pad * 2 + 60;
 
-                        {/* Camera viewport - Dynamic Perspective */}
-                        <div
-                            className="relative w-full max-w-4xl rounded-3xl overflow-hidden bg-black border-4 border-white/10 shadow-2xl"
-                            style={{
-                                aspectRatio: (() => {
-                                    const W = 420;
-                                    const PAD = selectedTemplate.padding;
-                                    const GAP = selectedTemplate.gap;
-                                    const cols = selectedTemplate.layout.cols;
-                                    const rows = selectedTemplate.layout.rows;
-                                    const gridW = W - PAD * 2;
-                                    const slotW = (gridW - GAP * (cols - 1)) / cols;
-                                    const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
-                                    const slotH = slotW / slotAspectRatio;
-                                    const gridH = slotH * rows + GAP * (rows - 1);
-                                    const H = gridH + PAD * 2 + 60; // 60 for watermark
-                                    return `${W} / ${H}`;
-                                })()
-                            }}
-                        >
-                            {/* 1. Camera Feed Removed (Now inside Slots) */}
-                            {/* video was here */}
+                    const padPctX = (pad / W) * 100;
+                    const padPctY = ((pad + 30) / H) * 100;
+                    const gapPctX = (gap / W) * 100;
+                    const gapPctY = (gap / H) * 100;
+                    const cellW = (slotW / W) * 100;
+                    const cellH = (slotH / H) * 100;
 
-                            {/* 2. Scalable Template Overlay */}
+                    return (
+                        <div className="flex-1 flex flex-col items-center justify-center px-6 py-8">
+                            {/* Header + progress bar */}
+                            <div className="w-full max-w-2xl mb-4">
+                                <div className="flex items-center justify-between mb-2">
+                                    <h2 className="text-xl font-bold">
+                                        Photo <span style={{ color: tc }}>{currentSlotIndex + 1}</span> of {selectedTemplate.slots.length}
+                                    </h2>
+                                    <span className="text-sm text-gray-400">
+                                        {captureSubState === 'countdown' ? '🟡 Get ready…' : captureSubState === 'preview' ? '✅ Looking good!' : '📸 Tap to snap'}
+                                    </span>
+                                </div>
+                                <div className="flex gap-2">
+                                    {selectedTemplate.slots.map((_: any, i: number) => (
+                                        <div
+                                            key={i}
+                                            className="h-2 flex-1 rounded-full transition-all duration-500"
+                                            style={{
+                                                background: capturedPhotos[i]
+                                                    ? themeGradient
+                                                    : i === currentSlotIndex
+                                                        ? `${tc}50`
+                                                        : 'rgba(255,255,255,0.1)',
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Camera / Template viewport — capped at 70vh so action bar is always visible */}
                             <div
-                                className="absolute inset-0 transition-transform duration-1000 ease-in-out origin-center will-change-transform"
+                                className="relative rounded-3xl overflow-hidden bg-black border-4 shadow-2xl mx-auto"
                                 style={{
-                                    containerType: 'inline-size',
-                                    transform: (() => {
-                                        if (viewMode === 'full' || !selectedTemplate) return 'scale(0.9)';
-
-                                        // Calculate Zoom to current slot
-                                        const slot = selectedTemplate.slots[currentSlotIndex];
-                                        if (!slot) return 'scale(1)';
-
-                                        // Using generic units assuming 100x100 coord system for calculations
-                                        // The SVG viewbox is 0 0 1200 1200*(aspect)
-                                        // Let's rely on percentage logic since template.slots are in Grid units, but we need % relative to container
-                                        // Actually simplest: Assume Container is 100% x 100%
-
-                                        // Logic:
-                                        // Template Layout: Rows, Cols. Gap, Padding.
-                                        // We need to find the center of the slot in % relative to the Template.
-
-                                        const rows = selectedTemplate.layout.rows;
-                                        const cols = selectedTemplate.layout.cols;
-                                        const gap = selectedTemplate.gap;
-                                        const pad = selectedTemplate.padding;
-
-                                        // Calculate slot geometry in hypothetical "Template Units" (e.g. Total Width = 1000)
-                                        // This is tricky without exact pixel mapping.
-                                        // Alternative: Use the Grid logic.
-
-                                        // Zoom Factor: Gentle Zoom (Keep ~20% context)
-                                        // Previous was 1.5x of cols. Now let's just ensure the slot takes up ~60-70% of view.
-                                        // Current Size (in %) = 100/cols approx.
-                                        // Target Size = 70%. Scale = 70 / (100/cols) = 0.7 * cols.
-                                        const scale = Math.max(1, selectedTemplate.layout.cols * 0.75);
-
-                                        // Let's compute Slot Center (Cx, Cy) in percentage (0-100)
-                                        const row = Math.floor(currentSlotIndex / cols);
-                                        const col = currentSlotIndex % cols;
-
-                                        // Total Width Units = cols + gaps + pads?
-                                        // No, the renderer (below) uses flex/grid with % or pixels? 
-                                        // Refactoring Helper:
-                                        // Let's define the center based on row/col index simply:
-                                        const cellW = 100 / cols;
-                                        const cellH = 100 / rows;
-                                        const centerX = (col + 0.5) * cellW;
-                                        const centerY = (row + 0.5) * cellH;
-
-                                        // Scale: We want the slot to fill say 60% of the screen?
-                                        // Zoom Factor = 3 (Safe generic zoom)
-                                        // Or cleaner: S = 1 / (1/cols) * 0.8 => 0.8 * cols.
-
-
-                                        // Translate to center:
-                                        // T = 50 - Center * S ? No.
-                                        // Render transforms: translate((50 - Cx)%, (50 - Cy)%) scale(S)
-
-                                        return `scale(${scale}) translate(${50 - centerX}%, ${50 - centerY}%)`;
-                                    })()
+                                    borderColor: captureSubState === 'preview' ? tc : 'rgba(255,255,255,0.1)',
+                                    boxShadow: captureSubState === 'preview' ? `0 0 40px ${tc}40` : undefined,
+                                    aspectRatio: `${W} / ${H}`,
+                                    height: 'min(70vh, 800px)',
+                                    width: 'auto',
+                                    maxWidth: '100%',
                                 }}
                             >
-                                {/* 1. Template Background Layer */}
+                                {/* Template background */}
                                 <div
                                     className="absolute inset-0 w-full h-full"
                                     style={{
-                                        background: selectedTemplate.background.includes('gradient') || selectedTemplate.background.includes('url')
-                                            ? selectedTemplate.background
-                                            : selectedTemplate.background,
+                                        background: selectedTemplate.background,
                                         backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
                                         backgroundSize: 'cover',
                                         backgroundPosition: 'center',
                                     }}
                                 />
 
-                                {/* 2. Slot Grid (Render Photos or Camera) */}
+                                {/* Slot Grid */}
                                 <div className="absolute inset-0 w-full h-full">
-                                    {selectedTemplate.slots.map((_, i) => {
-                                        const cols = selectedTemplate.layout.cols;
-                                        const rows = selectedTemplate.layout.rows;
-                                        const pad = selectedTemplate.padding;
-                                        const gap = selectedTemplate.gap;
-
-                                        // Use identical exact mathematical logic as generateComposite
-                                        const W = 420;
-                                        const gridW = W - pad * 2;
-                                        const slotW = (gridW - gap * (cols - 1)) / cols;
-                                        const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
-                                        const slotH = slotW / slotAspectRatio;
-                                        const gridH = slotH * rows + gap * (rows - 1);
-                                        const H = gridH + pad * 2 + 60;
-
-                                        const padPctX = (pad / W) * 100;
-                                        const padPctY = ((pad + 30) / H) * 100; // Add 30 to center vertically, matching generateComposite
-                                        const gapPctX = (gap / W) * 100;
-                                        const gapPctY = (gap / H) * 100;
-
-                                        const cellW = (slotW / W) * 100;
-                                        const cellH = (slotH / H) * 100;
-
+                                    {selectedTemplate.slots.map((_: any, i: number) => {
                                         const r = Math.floor(i / cols);
                                         const c = i % cols;
-
                                         const isCurrent = i === currentSlotIndex;
-                                        // Show camera if current AND auto-snapping (or just ready to snap)
-                                        // If not auto-snapping yet (just preview), we might show it in first slot?
-                                        // "isAutoSnapping" is strictly for the countdown loop.
-                                        // If we are in 'capture' step, we should show camera in current slot.
-                                        const showCamera = isCurrent && !capturedPhotos[i];
+                                        const showCamera = isCurrent && (captureSubState === 'live' || captureSubState === 'countdown') && !capturedPhotos[i];
 
-                                        return (
-                                            <div
-                                                key={i}
-                                                className="absolute overflow-hidden rounded-lg bg-black/10"
-                                                style={{
-                                                    left: `${padPctX + (c * (cellW + gapPctX))}%`,
-                                                    top: `${padPctY + (r * (cellH + gapPctY))}%`,
-                                                    width: `${cellW}%`,
-                                                    height: `${cellH}%`,
-                                                    borderRadius: `${selectedTemplate.borderRadius}px`, // Use template radius if avail? Or fixed.
-                                                    // Design tweak: user wants template radius. Let's assume standard 1% or similar if not in config.
-                                                }}
-                                            >
-                                                {/* Render Photo if captured */}
-                                                {capturedPhotos[i] && (
-                                                    <img src={capturedPhotos[i]} className="absolute inset-0 w-full h-full object-cover" />
-                                                )}
-
-                                                {/* Render Camera if active */}
-                                                {showCamera && (
-                                                    <div className="absolute inset-0 w-full h-full">
-                                                        <video
-                                                            ref={setVideoRef}
-                                                            autoPlay
-                                                            playsInline
-                                                            muted
-                                                            className="absolute inset-0 w-full h-full object-cover"
-                                                            style={{ transform: 'scaleX(-1)' }}
-                                                        />
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-
-                                {/* 3. Text & Stickers Overlay */}
-                                <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl">
-                                    {selectedTemplate.textElements.map((el) => (
-                                        <div key={el.id} style={{
-                                            position: 'absolute',
-                                            left: `${el.x}%`, top: `${el.y}%`,
-                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                            color: el.color,
-                                            fontSize: `calc(${el.fontSize} / 420 * 100cqw)`,
-                                            fontFamily: el.fontFamily,
-                                            fontWeight: el.fontWeight,
-                                            fontStyle: el.fontStyle,
-                                            width: 'max-content',
-                                            textShadow: el.textShadow
-                                        }}>
-                                            {el.text}
+                                    return (
+                                        <div
+                                            key={i}
+                                            className="absolute overflow-hidden bg-black/10 transition-all duration-300"
+                                            style={{
+                                                left: `${padPctX + c * (cellW + gapPctX)}%`,
+                                                top: `${padPctY + r * (cellH + gapPctY)}%`,
+                                                width: `${cellW}%`,
+                                                height: `${cellH}%`,
+                                                borderRadius: `${selectedTemplate.borderRadius}px`,
+                                                outline: isCurrent && captureSubState === 'preview'
+                                                    ? `3px solid ${tc}`
+                                                    : isCurrent ? `2px solid ${tc}80` : 'none',
+                                                outlineOffset: '2px',
+                                            }}
+                                        >
+                                            {capturedPhotos[i] && (
+                                                <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="absolute inset-0 w-full h-full object-cover" />
+                                            )}
+                                            {showCamera && (
+                                                <div className="absolute inset-0 w-full h-full">
+                                                    <video
+                                                        ref={setVideoRef}
+                                                        autoPlay playsInline muted
+                                                        className="absolute inset-0 w-full h-full object-cover"
+                                                        style={{ transform: 'scaleX(-1)' }}
+                                                    />
+                                                </div>
+                                            )}
+                                            {!capturedPhotos[i] && !showCamera && (
+                                                <div className="absolute inset-0 flex items-center justify-center bg-gray-900/60">
+                                                    <span className="text-gray-600 text-2xl font-bold">{i + 1}</span>
+                                                </div>
+                                            )}
                                         </div>
-                                    ))}
-                                    {(selectedTemplate.stickers || []).map((stk) => (
-                                        <div key={stk.id} style={{
-                                            position: 'absolute',
-                                            left: `${stk.x}%`, top: `${stk.y}%`,
-                                            width: `calc(${stk.width} / 420 * 100cqw)`,
-                                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`
-                                        }}>
-                                            <img src={stk.src} className="w-full h-auto drop-shadow-md" />
-                                        </div>
-                                    ))}
-                                </div>
+                                    );
+                                })}
                             </div>
 
-                            {/* Countdown overlay - Always centered in viewport (fixed) */}
+                            {/* Text & Stickers overlay */}
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl" style={{ containerType: 'inline-size' }}>
+                                {selectedTemplate.textElements.map((el: any) => (
+                                    <div key={el.id} style={{
+                                        position: 'absolute', left: `${el.x}%`, top: `${el.y}%`,
+                                        transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
+                                        color: el.color, fontSize: `calc(${el.fontSize} / 420 * 100cqw)`,
+                                        fontFamily: el.fontFamily, fontWeight: el.fontWeight,
+                                        fontStyle: el.fontStyle, width: 'max-content', textShadow: el.textShadow
+                                    }}>{el.text}</div>
+                                ))}
+                                {(selectedTemplate.stickers || []).map((stk: any) => (
+                                    <div key={stk.id} style={{
+                                        position: 'absolute', left: `${stk.x}%`, top: `${stk.y}%`,
+                                        width: `calc(${stk.width} / 420 * 100cqw)`,
+                                        transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`
+                                    }}><img src={stk.src} className="w-full h-auto drop-shadow-md" /></div>
+                                ))}
+                            </div>
+
+                            {/* Countdown is rendered as a fixed fullscreen overlay — see below */}
+
+                            {/* Hidden video: always carries the stream for gesture detection */}
+                            <video
+                                ref={setGestureVideoRef}
+                                autoPlay playsInline muted
+                                className="hidden"
+                            />
+
+                            {/* GestureDetector — only when gestures are enabled */}
+                            {boothSettings.gesturesEnabled && (
+                                <GestureDetector
+                                    videoRef={gestureVideoRef}
+                                    mode={captureSubState === 'live' ? 'snap' : captureSubState === 'preview' ? 'preview' : 'off'}
+                                    onRetake={handleRetakeSlot}
+                                    onConfirm={captureSubState === 'live' ? handleSnapSlot : handleKeepSlot}
+                                    onHoldProgress={(progress, target) => {
+                                        setGestureHoldProgress(progress);
+                                        setGestureHoldTarget(target);
+                                    }}
+                                    themeColor={tc}
+                                />
+                            )}
+
+                            {/* ── Fullscreen Countdown Overlay (The "Ultimate Zoom") ── */}
                             {countdown !== null && (
-                                <div className="absolute inset-0 z-50 flex items-center justify-center">
-                                    <span className="text-9xl font-bold text-white drop-shadow-lg animate-countPulse" key={countdown}>
-                                        {countdown}
-                                    </span>
+                                <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center animate-fadeIn">
+                                    {/* Blurred Background Feed */}
+                                    <video
+                                        ref={(el) => {
+                                            if (el && streamRef.current) {
+                                                el.srcObject = streamRef.current;
+                                            }
+                                        }}
+                                        autoPlay playsInline muted
+                                        className="absolute inset-0 w-full h-full object-cover opacity-40 blur-xl"
+                                        style={{ transform: 'scaleX(-1)' }}
+                                    />
+                                    
+                                    {/* Main Focus Frame */}
+                                    <div className="relative z-10 border-8 border-white/20 rounded-[40px] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.8)] transition-all duration-500 scale-110"
+                                        style={{ 
+                                            aspectRatio: (() => {
+                                                const W = 420;
+                                                const PAD = selectedTemplate.padding;
+                                                const GAP = selectedTemplate.gap;
+                                                const cols = selectedTemplate.layout.cols;
+                                                const rows = selectedTemplate.layout.rows;
+                                                const gridW = W - PAD * 2;
+                                                const slotW = (gridW - GAP * (cols - 1)) / cols;
+                                                const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
+                                                const slotH = slotW / slotAspectRatio;
+                                                const gridH = slotH * rows + GAP * (rows - 1);
+                                                const H = gridH + PAD * 2 + 60;
+                                                return `${W} / ${H}`;
+                                            })(),
+                                            width: 'min(85vw, 1000px)', 
+                                            maxHeight: '75vh' 
+                                        }}>
+                                        <video
+                                            ref={(el) => {
+                                                if (el && streamRef.current) {
+                                                    el.srcObject = streamRef.current;
+                                                }
+                                            }}
+                                            autoPlay playsInline muted
+                                            className="w-full h-full object-cover"
+                                            style={{ transform: 'scaleX(-1)' }}
+                                        />
+                                        {/* Vignette & Corner Accents */}
+                                        <div className="absolute inset-0 shadow-[inset_0_0_150px_rgba(0,0,0,0.6)]" />
+                                        <div className="absolute top-8 left-8 w-12 h-12 border-t-4 border-l-4 border-white/40 rounded-tl-2xl" />
+                                        <div className="absolute top-8 right-8 w-12 h-12 border-t-4 border-r-4 border-white/40 rounded-tr-2xl" />
+                                        <div className="absolute bottom-8 left-8 w-12 h-12 border-b-4 border-l-4 border-white/40 rounded-bl-2xl" />
+                                        <div className="absolute bottom-8 right-8 w-12 h-12 border-b-4 border-r-4 border-white/40 rounded-br-2xl" />
+                                    </div>
+
+                                    {/* Massive Countdown Number */}
+                                    <div className="relative z-20 -mt-20">
+                                        <span
+                                            className="font-black text-white animate-countPulse block"
+                                            key={countdown}
+                                            style={{ 
+                                                fontSize: 'clamp(10rem, 25vw, 22rem)', 
+                                                textShadow: `0 0 80px ${tc}, 0 0 160px ${tc}80, 0 20px 40px rgba(0,0,0,0.5)` 
+                                            }}
+                                        >
+                                            {countdown}
+                                        </span>
+                                    </div>
+                                    
+                                    {/* Action Hint */}
+                                    <div className="absolute bottom-12 flex flex-col items-center gap-4 animate-bounce">
+                                        <div className="px-8 py-3 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white font-bold tracking-[0.2em] uppercase text-lg">
+                                            Smile!
+                                        </div>
+                                    </div>
+
+                                    {/* Flash Effect on Last Second (optional visual polish) */}
+                                    {countdown === 1 && <div className="absolute inset-0 z-[110] bg-white animate-flash opacity-0 pointer-events-none" />}
                                 </div>
                             )}
                         </div>
 
-                        {/* Captured thumbnails */}
-                        <div className="flex gap-3 mt-6">
+                        {/* ── Action Bar ──────────────────────────────────────────── */}
+                        <div className="mt-4 w-full max-w-3xl flex flex-col items-center gap-3">
+
+                            {/* Live: ← Template | Snap button | gesture hint | camera switcher */}
+                            {captureSubState === 'live' && (
+                                <div className="w-full flex items-center gap-3">
+                                    <button
+                                        onClick={() => { setStep('select-template'); stopCamera(); }}
+                                        className="px-4 py-2.5 rounded-xl border border-white/15 text-gray-500 hover:text-white hover:bg-white/10 transition-all text-sm shrink-0"
+                                    >← Template</button>
+
+                                    {/* Snap button — always visible */}
+                                    <button
+                                        id="snap-button"
+                                        onClick={handleSnapSlot}
+                                        className="relative flex-1 flex items-center justify-center gap-2.5 py-3 rounded-2xl font-semibold text-white transition-all hover:scale-[1.02] active:scale-95 overflow-hidden"
+                                        style={{ background: themeGradient, boxShadow: themeShadow }}
+                                    >
+                                        {/* Gesture hold fill overlay */}
+                                        {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm' && (
+                                            <div
+                                                className="absolute inset-0 rounded-2xl bg-white/20"
+                                                style={{ width: `${gestureHoldProgress}%`, transition: 'width 0.05s linear' }}
+                                            />
+                                        )}
+                                        <span className="relative text-lg">📸</span>
+                                        <span className="relative text-sm font-bold">
+                                            {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm'
+                                                ? `Snapping… ${Math.round(gestureHoldProgress)}%`
+                                                : 'Snap!'}
+                                        </span>
+                                    </button>
+
+                                    {boothSettings.gesturesEnabled && (
+                                        <div className="shrink-0 flex items-center gap-1 px-3 py-2.5 rounded-xl text-xs text-white/40"
+                                            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                                            <span>👍</span>
+                                            <span>or snap</span>
+                                        </div>
+                                    )}
+
+                                    {devices.length > 1 && (
+                                        <select
+                                            className="bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-sm text-white/70 focus:outline-none hover:bg-white/10 cursor-pointer appearance-none shrink-0"
+                                            value={selectedDeviceId} onChange={handleDeviceChange} title="Switch Camera"
+                                        >
+                                            {devices.map((d, i) => (
+                                                <option key={d.deviceId} value={d.deviceId} className="bg-gray-900">{d.label || `Camera ${i + 1}`}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Countdown: cancel only */}
+                            {captureSubState === 'countdown' && (
+                                <div className="flex justify-center">
+                                    <button
+                                        onClick={handleRetakeSlot}
+                                        className="px-6 py-2.5 rounded-xl border border-white/15 text-gray-400 hover:text-white hover:bg-white/10 transition-all text-sm"
+                                    >✕ Cancel</button>
+                                </div>
+                            )}
+
+                            {/* Preview: Retake + Keep buttons (always) + gesture overlays if enabled */}
+                            {captureSubState === 'preview' && (
+                                <div className="w-full flex items-center gap-3">
+                                    {/* Retake button */}
+                                    <div className="relative overflow-hidden rounded-2xl shrink-0">
+                                        {boothSettings.gesturesEnabled && gestureHoldTarget === 'retake' && (
+                                            <div
+                                                className="absolute inset-y-0 left-0 bg-red-500/30 rounded-2xl"
+                                                style={{ width: `${gestureHoldProgress}%`, transition: 'width 0.05s linear' }}
+                                            />
+                                        )}
+                                        <button
+                                            id="retake-slot-button"
+                                            onClick={handleRetakeSlot}
+                                            className="relative flex items-center gap-2 px-5 py-3 text-sm font-semibold text-white/80 hover:text-white transition-colors"
+                                            style={{
+                                                background: boothSettings.gesturesEnabled && gestureHoldTarget === 'retake'
+                                                    ? 'rgba(248,113,113,0.15)'
+                                                    : 'rgba(255,255,255,0.06)',
+                                                border: boothSettings.gesturesEnabled && gestureHoldTarget === 'retake'
+                                                    ? '1px solid rgba(248,113,113,0.4)'
+                                                    : '1px solid rgba(255,255,255,0.12)',
+                                                borderRadius: '16px',
+                                                transition: 'all 0.2s',
+                                            }}
+                                        >
+                                            {boothSettings.gesturesEnabled && <span className="text-base">✋</span>}
+                                            <span>🔄 Retake</span>
+                                        </button>
+                                    </div>
+
+                                    {/* Keep / auto-keep bar */}
+                                    <div className="relative flex-1 h-12 rounded-2xl overflow-hidden"
+                                        style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${tc}30` }}>
+                                        {/* Auto-keep fill (10s) */}
+                                        <div
+                                            className="absolute inset-y-0 left-0 rounded-2xl"
+                                            style={{
+                                                width: `${autoKeepProgress}%`,
+                                                background: `linear-gradient(90deg, ${tc}25, ${tc}50)`,
+                                                transition: 'width 0.05s linear',
+                                            }}
+                                        />
+                                        {/* Thumbsup instant-keep overlay */}
+                                        {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm' && (
+                                            <div
+                                                className="absolute inset-y-0 left-0 rounded-2xl"
+                                                style={{
+                                                    width: `${gestureHoldProgress}%`,
+                                                    background: `linear-gradient(90deg, ${tc}80, ${tc})`,
+                                                    transition: 'width 0.05s linear',
+                                                }}
+                                            />
+                                        )}
+                                        <div className="absolute inset-0 flex items-center justify-center gap-2">
+                                            <span className="text-base">
+                                                {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm' ? '👍' : '✅'}
+                                            </span>
+                                            <span className="text-sm font-semibold text-white/80">
+                                                {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm'
+                                                    ? `Keeping now… ${Math.round(gestureHoldProgress)}%`
+                                                    : currentSlotIndex + 1 >= selectedTemplate.slots.length
+                                                    ? 'Keep & Finish'
+                                                    : 'Keep & Next →'}
+                                            </span>
+                                        </div>
+                                        {/* Tap anywhere = immediate keep */}
+                                        <button
+                                            id="keep-slot-button"
+                                            onClick={handleKeepSlot}
+                                            className="absolute inset-0 w-full h-full opacity-0"
+                                            aria-label="Keep photo"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Thumbnail strip — active slot auto-scrolls into view */}
+                        <div className="flex gap-3 mt-5 overflow-x-auto pb-1 max-w-full" style={{ scrollbarWidth: 'none' }}>
                             {selectedTemplate.slots.map((_: any, i: number) => (
                                 <div
                                     key={i}
-                                    className={`w-16 h-16 rounded-xl overflow-hidden border-2 transition-all ${i < capturedPhotos.length
-                                        ? 'shadow-lg'
-                                        : i === currentSlotIndex
-                                            ? 'border-white/50 animate-pulse'
-                                            : 'border-white/10'
+                                    ref={(el) => {
+                                        if (el && i === currentSlotIndex) {
+                                            el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                                        }
+                                    }}
+                                    className={`shrink-0 w-14 h-14 rounded-xl overflow-hidden border-2 transition-all duration-300 ${i === currentSlotIndex && captureSubState === 'preview'
+                                            ? 'scale-110'
+                                            : capturedPhotos[i]
+                                                ? 'shadow-lg'
+                                                : i === currentSlotIndex
+                                                    ? 'border-white/60 animate-pulse'
+                                                    : 'border-white/10'
                                         }`}
-                                    style={i < capturedPhotos.length ? { borderColor: tc, boxShadow: `0 4px 12px ${tc}30` } : undefined}
+                                    style={{
+                                        borderColor: i === currentSlotIndex && captureSubState === 'preview'
+                                            ? tc
+                                            : capturedPhotos[i] ? tc : undefined,
+                                        boxShadow: i === currentSlotIndex && captureSubState === 'preview'
+                                            ? `0 0 16px ${tc}80`
+                                            : capturedPhotos[i] ? `0 4px 12px ${tc}40` : undefined,
+                                    }}
                                 >
                                     {capturedPhotos[i] ? (
                                         <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
                                     ) : (
-                                        <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-600 text-xs">
-                                            {i + 1}
-                                        </div>
+                                        <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-600 text-xs font-bold">{i + 1}</div>
                                     )}
                                 </div>
                             ))}
                         </div>
-
-                        {/* Controls */}
-                        <div className="mt-6 flex items-center gap-4">
-                            <button
-                                onClick={() => {
-                                    autoSnapRef.current = false;
-                                    clearTimeouts();
-                                    setIsAutoSnapping(false);
-                                    setStep('select-template');
-                                    stopCamera();
-                                }}
-                                className="px-6 py-3 rounded-xl border border-white/20 text-gray-400 hover:text-white hover:bg-white/10 transition-all text-sm"
-                            >
-                                ← Change Template
-                            </button>
-                            {/* Manual capture button when auto-snap is off */}
-                            {boothSettings.autoSnap === false && capturedPhotos.length < selectedTemplate.slots.length && (
-                                <button
-                                    onClick={handleManualSnap}
-                                    className="px-8 py-4 rounded-2xl text-white font-bold shadow-xl transition-all hover:scale-105 active:scale-95 text-lg"
-                                    style={{ background: themeGradient, boxShadow: themeShadow }}
-                                >
-                                    📸 Take Photo
-                                </button>
-                            )}
-                            {!isAutoSnapping && boothSettings.autoSnap !== false && capturedPhotos.length < selectedTemplate.slots.length && (
-                                <button
-                                    onClick={() => runAutoSnap(selectedTemplate)}
-                                    className="px-6 py-3 rounded-xl text-white font-bold shadow-lg hover:shadow-xl transition-all hover:scale-105"
-                                    style={{ background: themeGradient }}
-                                >
-                                    ▶ Start Auto-Snap
-                                </button>
-                            )}
-                        </div>
                     </div>
-                )}
+                    );
+                })()}
 
                 {/* ── STEP: Review ──────────────────────────────────────── */}
                 {step === 'review' && selectedTemplate && (
@@ -1299,29 +1481,46 @@ export default function PublicBoothPage() {
                             )}
                         </div>
 
-                        {/* Actions */}
-                        <div className="flex gap-4 mt-8">
-                            <button
-                                onClick={handleRetake}
-                                className="px-6 py-3 rounded-xl border-2 border-white/20 text-white hover:bg-white/10 transition-all font-semibold"
-                            >
-                                🔄 Retake
-                            </button>
-                            <button
-                                onClick={handleConfirmAndGenerateQR}
-                                disabled={uploadingComposite}
-                                className="px-8 py-3 rounded-xl text-white font-bold shadow-xl hover:shadow-2xl transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-                                style={{ background: themeGradient, boxShadow: themeShadow }}
-                            >
-                                {uploadingComposite ? (
-                                    <span className="flex items-center gap-2">
-                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                        Generating QR...
-                                    </span>
-                                ) : (
-                                    '✅ Looks Great!'
-                                )}
-                            </button>
+                        {/* Actions + 👍 gesture for confirm */}
+                        <div className="flex flex-col items-center gap-3 mt-8">
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={handleRetake}
+                                    className="px-6 py-3 rounded-xl border-2 border-white/20 text-white hover:bg-white/10 transition-all font-semibold flex items-center gap-2"
+                                >
+                                    🔄 Retake All
+                                </button>
+                                <button
+                                    id="confirm-qr-button"
+                                    onClick={handleConfirmAndGenerateQR}
+                                    disabled={uploadingComposite}
+                                    className="px-8 py-3 rounded-xl text-white font-bold shadow-xl hover:shadow-2xl transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    style={{ background: themeGradient, boxShadow: themeShadow }}
+                                >
+                                    {uploadingComposite ? (
+                                        <span className="flex items-center gap-2">
+                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                            Generating QR...
+                                        </span>
+                                    ) : (
+                                        '✅ Looks Great!'
+                                    )}
+                                </button>
+                            </div>
+
+                            {/* Thumbs-up gesture hint */}
+                            <div className="relative w-full flex justify-center mt-1">
+                                {/* Hidden video element for gesture-only camera on review screen */}
+                                <video ref={reviewVideoRef} autoPlay playsInline muted className="hidden" />
+
+                                <GestureDetector
+                                    videoRef={reviewVideoRef}
+                                    mode="confirm"
+                                    onRetake={() => { }}
+                                    onConfirm={handleConfirmAndGenerateQR}
+                                    themeColor={tc}
+                                />
+                            </div>
                         </div>
                     </div>
                 )}
