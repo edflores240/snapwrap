@@ -1,18 +1,33 @@
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { 
+    X, Save, Palette, Layout, Type, Star, Image as ImageIcon, 
+    ChevronLeft, ChevronRight, Plus, Trash2, Maximize, 
+    Move, RotateCw, Hash, Grid, Copy, Layers, AlignCenter,
+    FlipHorizontal, ArrowUp, ArrowDown, RotateCcw, Eye, EyeOff
+} from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { supabase } from '@/lib/supabase';
+import Image from 'next/image';
+import { motion, AnimatePresence } from 'framer-motion';
+import TemplateVisualizer, { TemplateVisualizerHandle } from './TemplateVisualizer';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface Sticker {
     id: string;
     src: string;
-    x: number;    // percent 0-100
-    y: number;    // percent 0-100
-    width: number; // px (relative to base 420 width)
+    x: number;      // percent 0-100
+    y: number;      // percent 0-100
+    width: number;  // px (relative to base 420 width)
+    height: number; // px (0 = auto aspect ratio)
     rotation: number;
+    cropX: number;  // image pan offset X percent (-50 to 50)
+    cropY: number;  // image pan offset Y percent (-50 to 50)
+    flipX: boolean;
+    flipY: boolean;
+    opacity: number;
 }
 
 interface TextElement {
@@ -34,13 +49,18 @@ interface TextElement {
 
 interface PhotoSlot {
     id: string;
-    row: number;
-    col: number;
+    x: number;      // percentage 0-100
+    y: number;      // percentage 0-100
+    width: number;  // percentage
+    height: number; // percentage
+    rotation: number;
 }
 
 export interface TemplateConfig {
     id: string;
     name: string;
+    width: number;  // px (base unit for scaling)
+    height: number; // px
     layout: { rows: number; cols: number };
     slots: PhotoSlot[];
     background: string;
@@ -53,6 +73,8 @@ export interface TemplateConfig {
     textElements: TextElement[];
     stickers?: Sticker[];
     watermarkText: string;
+    backgroundSnapshot?: string; // Data URL or URL for flattened background
+    foregroundSnapshot?: string; // Data URL or URL for flattened foreground (stickers, text, borders)
 }
 
 // ─── Pre-made Templates ─────────────────────────────────────────────────────
@@ -85,8 +107,10 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
     // ── 1. Classic Elegant ─────────────────────────────────────────
     {
         name: 'Classic Elegant',
+        width: 420,
+        height: 630,
         layout: { rows: 1, cols: 1 },
-        slots: [{ id: 's1', row: 0, col: 0 }],
+        slots: [{ id: 's1', x: 5, y: 15, width: 90, height: 70, rotation: 0 }],
         background: '#ffffff',
         borderColor: '#d4af37',
         borderWidth: 3,
@@ -94,20 +118,22 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
         gap: 0,
         padding: 36,
         textElements: [
-            createDefaultTextElement({ text: '✦ Our Special Day ✦', x: 50, y: 5, fontSize: 24, fontFamily: 'Georgia, serif', color: '#92400e', letterSpacing: 2 }),
-            createDefaultTextElement({ id: 'date1', text: '14 • February • 2026', x: 50, y: 92, fontSize: 13, color: '#b45309', fontWeight: '400', fontStyle: 'italic', letterSpacing: 3 }),
+            createDefaultTextElement({ text: 'Our Special Day', x: 50, y: 5, fontSize: 24, fontFamily: 'Georgia, serif', color: '#92400e', letterSpacing: 2 }),
+            createDefaultTextElement({ id: 'date1', text: '14 February 2026', x: 50, y: 92, fontSize: 13, color: '#b45309', fontWeight: '400', fontStyle: 'italic', letterSpacing: 3 }),
         ],
         watermarkText: 'SnapWrap',
     },
     // ── 2. Neon Glow ───────────────────────────────────────────────
     {
         name: 'Neon Glow',
+        width: 420,
+        height: 630,
         layout: { rows: 4, cols: 1 },
         slots: [
-            { id: 's1', row: 0, col: 0 },
-            { id: 's2', row: 1, col: 0 },
-            { id: 's3', row: 2, col: 0 },
-            { id: 's4', row: 3, col: 0 },
+            { id: 's1', x: 5, y: 7, width: 90, height: 18, rotation: 0 },
+            { id: 's2', x: 5, y: 28, width: 90, height: 18, rotation: 0 },
+            { id: 's3', x: 5, y: 49, width: 90, height: 18, rotation: 0 },
+            { id: 's4', x: 5, y: 70, width: 90, height: 18, rotation: 0 },
         ],
         background: '#0a0a0a',
         borderColor: '#ff2d95',
@@ -124,8 +150,10 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
     // ── 3. Retro Polaroid ──────────────────────────────────────────
     {
         name: 'Retro Polaroid',
+        width: 420,
+        height: 630,
         layout: { rows: 1, cols: 1 },
-        slots: [{ id: 's1', row: 0, col: 0 }],
+        slots: [{ id: 's1', x: 10, y: 10, width: 80, height: 70, rotation: 0 }],
         background: '#fefce8',
         borderColor: '#e5e5e5',
         borderWidth: 0,
@@ -133,19 +161,21 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
         gap: 0,
         padding: 24,
         textElements: [
-            createDefaultTextElement({ text: 'instant memories 📷', x: 50, y: 90, fontSize: 18, fontFamily: 'cursive', color: '#44403c', fontWeight: '400', rotation: -2 }),
+            createDefaultTextElement({ text: 'instant memories', x: 50, y: 90, fontSize: 18, fontFamily: 'cursive', color: '#44403c', fontWeight: '400', rotation: -2 }),
         ],
         watermarkText: '',
     },
     // ── 4. Sunset Vibes ────────────────────────────────────────────
     {
         name: 'Sunset Vibes',
+        width: 420,
+        height: 630,
         layout: { rows: 2, cols: 2 },
         slots: [
-            { id: 's1', row: 0, col: 0 },
-            { id: 's2', row: 0, col: 1 },
-            { id: 's3', row: 1, col: 0 },
-            { id: 's4', row: 1, col: 1 },
+            { id: 's1', x: 4, y: 15, width: 44, height: 35, rotation: 0 },
+            { id: 's2', x: 52, y: 15, width: 44, height: 35, rotation: 0 },
+            { id: 's3', x: 4, y: 55, width: 44, height: 35, rotation: 0 },
+            { id: 's4', x: 52, y: 55, width: 44, height: 35, rotation: 0 },
         ],
         background: 'linear-gradient(135deg, #f97316 0%, #ec4899 50%, #8b5cf6 100%)',
         borderColor: 'rgba(255,255,255,0.4)',
@@ -155,17 +185,19 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
         padding: 24,
         textElements: [
             createDefaultTextElement({ text: 'SUNSET VIBES', x: 50, y: 4, fontSize: 22, color: '#ffffff', fontWeight: '900', letterSpacing: 4, textShadow: '0 2px 8px rgba(0,0,0,0.3)' }),
-            createDefaultTextElement({ id: 'sub1', text: 'golden hour ☀️', x: 50, y: 94, fontSize: 13, color: 'rgba(255,255,255,0.9)', fontWeight: '400', fontStyle: 'italic' }),
+            createDefaultTextElement({ id: 'sub1', text: 'golden hour', x: 50, y: 94, fontSize: 13, color: 'rgba(255,255,255,0.9)', fontWeight: '400', fontStyle: 'italic' }),
         ],
         watermarkText: 'SnapWrap',
     },
     // ── 5. Emerald Luxe ────────────────────────────────────────────
     {
         name: 'Emerald Luxe',
+        width: 420,
+        height: 630,
         layout: { rows: 2, cols: 1 },
         slots: [
-            { id: 's1', row: 0, col: 0 },
-            { id: 's2', row: 1, col: 0 },
+            { id: 's1', x: 10, y: 10, width: 80, height: 38, rotation: 0 },
+            { id: 's2', x: 10, y: 52, width: 80, height: 38, rotation: 0 },
         ],
         background: '#064e3b',
         borderColor: '#d4af37',
@@ -182,11 +214,13 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
     // ── 6. Film Strip ──────────────────────────────────────────────
     {
         name: 'Film Strip',
+        width: 420,
+        height: 630,
         layout: { rows: 3, cols: 1 },
         slots: [
-            { id: 's1', row: 0, col: 0 },
-            { id: 's2', row: 1, col: 0 },
-            { id: 's3', row: 2, col: 0 },
+            { id: 's1', x: 15, y: 5, width: 70, height: 28, rotation: 0 },
+            { id: 's2', x: 15, y: 35, width: 70, height: 28, rotation: 0 },
+            { id: 's3', x: 15, y: 65, width: 70, height: 28, rotation: 0 },
         ],
         background: '#18181b',
         borderColor: '#3f3f46',
@@ -203,11 +237,13 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
     // ── 7. Insta Grid ──────────────────────────────────────────────
     {
         name: 'Insta Grid',
+        width: 420,
+        height: 630,
         layout: { rows: 3, cols: 3 },
         slots: [
-            { id: 's1', row: 0, col: 0 }, { id: 's2', row: 0, col: 1 }, { id: 's3', row: 0, col: 2 },
-            { id: 's4', row: 1, col: 0 }, { id: 's5', row: 1, col: 1 }, { id: 's6', row: 1, col: 2 },
-            { id: 's7', row: 2, col: 0 }, { id: 's8', row: 2, col: 1 }, { id: 's9', row: 2, col: 2 },
+            { id: 's1', x: 5, y: 15, width: 28, height: 25, rotation: 0 }, { id: 's2', x: 36, y: 15, width: 28, height: 25, rotation: 0 }, { id: 's3', x: 67, y: 15, width: 28, height: 25, rotation: 0 },
+            { id: 's4', x: 5, y: 43, width: 28, height: 25, rotation: 0 }, { id: 's5', x: 36, y: 43, width: 28, height: 25, rotation: 0 }, { id: 's6', x: 67, y: 43, width: 28, height: 25, rotation: 0 },
+            { id: 's7', x: 5, y: 71, width: 28, height: 25, rotation: 0 }, { id: 's8', x: 36, y: 71, width: 28, height: 25, rotation: 0 }, { id: 's9', x: 67, y: 71, width: 28, height: 25, rotation: 0 },
         ],
         background: 'linear-gradient(135deg, #833ab4 0%, #fd1d1d 50%, #fcb045 100%)',
         borderColor: 'rgba(255,255,255,0.2)',
@@ -222,13 +258,15 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
     },
     // ── 8. Tropical Party ──────────────────────────────────────────
     {
-        name: 'Tropical Party 🌴',
+        name: 'Tropical Party',
+        width: 420,
+        height: 630,
         layout: { rows: 2, cols: 2 },
         slots: [
-            { id: 's1', row: 0, col: 0 },
-            { id: 's2', row: 0, col: 1 },
-            { id: 's3', row: 1, col: 0 },
-            { id: 's4', row: 1, col: 1 },
+            { id: 's1', x: 5, y: 15, width: 42, height: 35, rotation: 0 },
+            { id: 's2', x: 53, y: 15, width: 42, height: 35, rotation: 0 },
+            { id: 's3', x: 5, y: 55, width: 42, height: 35, rotation: 0 },
+            { id: 's4', x: 53, y: 55, width: 42, height: 35, rotation: 0 },
         ],
         background: 'linear-gradient(180deg, #0ea5e9 0%, #06b6d4 40%, #10b981 100%)',
         borderColor: 'rgba(255,255,255,0.5)',
@@ -237,7 +275,7 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
         gap: 10,
         padding: 28,
         textElements: [
-            createDefaultTextElement({ text: '🌺 TROPICAL VIBES 🌴', x: 50, y: 4, fontSize: 18, color: '#ffffff', fontWeight: '800', textShadow: '0 2px 6px rgba(0,0,0,0.25)' }),
+            createDefaultTextElement({ text: 'TROPICAL VIBES', x: 50, y: 4, fontSize: 18, color: '#ffffff', fontWeight: '800', textShadow: '0 2px 6px rgba(0,0,0,0.25)' }),
             createDefaultTextElement({ id: 'sub1', text: 'Summer Party 2026', x: 50, y: 94, fontSize: 12, color: 'rgba(255,255,255,0.85)', fontWeight: '400' }),
         ],
         watermarkText: 'SnapWrap',
@@ -245,10 +283,12 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
     // ── 9. Lavender Dreams ─────────────────────────────────────────
     {
         name: 'Lavender Dreams',
+        width: 420,
+        height: 630,
         layout: { rows: 1, cols: 2 },
         slots: [
-            { id: 's1', row: 0, col: 0 },
-            { id: 's2', row: 0, col: 1 },
+            { id: 's1', x: 5, y: 20, width: 44, height: 60, rotation: 0 },
+            { id: 's2', x: 51, y: 20, width: 44, height: 60, rotation: 0 },
         ],
         background: 'linear-gradient(135deg, #c4b5fd 0%, #f0abfc 50%, #fecdd3 100%)',
         borderColor: 'rgba(255,255,255,0.6)',
@@ -258,18 +298,19 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
         padding: 28,
         textElements: [
             createDefaultTextElement({ text: 'Dreamy Duo', x: 50, y: 8, fontSize: 26, fontFamily: 'Georgia, serif', color: '#581c87', fontStyle: 'italic' }),
-            createDefaultTextElement({ id: 'sub1', text: '♡', x: 50, y: 90, fontSize: 20, color: '#9333ea' }),
         ],
         watermarkText: 'SnapWrap',
     },
     // ── 10. Midnight Blue ──────────────────────────────────────────
     {
         name: 'Midnight Blue',
+        width: 420,
+        height: 630,
         layout: { rows: 3, cols: 2 },
         slots: [
-            { id: 's1', row: 0, col: 0 }, { id: 's2', row: 0, col: 1 },
-            { id: 's3', row: 1, col: 0 }, { id: 's4', row: 1, col: 1 },
-            { id: 's5', row: 2, col: 0 }, { id: 's6', row: 2, col: 1 },
+            { id: 's1', x: 5, y: 10, width: 44, height: 25, rotation: 0 }, { id: 's2', x: 51, y: 10, width: 44, height: 25, rotation: 0 },
+            { id: 's3', x: 5, y: 38, width: 44, height: 25, rotation: 0 }, { id: 's4', x: 51, y: 38, width: 44, height: 25, rotation: 0 },
+            { id: 's5', x: 5, y: 66, width: 44, height: 25, rotation: 0 }, { id: 's6', x: 51, y: 66, width: 44, height: 25, rotation: 0 },
         ],
         background: 'linear-gradient(180deg, #020617 0%, #0f172a 50%, #1e1b4b 100%)',
         borderColor: '#6366f1',
@@ -278,7 +319,7 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
         gap: 6,
         padding: 20,
         textElements: [
-            createDefaultTextElement({ text: '✨ MIDNIGHT GALA ✨', x: 50, y: 2, fontSize: 18, color: '#c7d2fe', fontWeight: '800', letterSpacing: 3, textShadow: '0 0 12px rgba(99,102,241,0.5)' }),
+            createDefaultTextElement({ text: 'MIDNIGHT GALA', x: 50, y: 2, fontSize: 18, color: '#c7d2fe', fontWeight: '800', letterSpacing: 3, textShadow: '0 0 12px rgba(99,102,241,0.5)' }),
             createDefaultTextElement({ id: 'sub1', text: 'Under the Stars', x: 50, y: 96, fontSize: 11, color: '#818cf8', fontWeight: '400', fontStyle: 'italic' }),
         ],
         watermarkText: 'SnapWrap',
@@ -286,13 +327,15 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
     // ── 11. Modern Mono ────────────────────────────────────────────
     {
         name: 'Modern Mono',
+        width: 420,
+        height: 630,
         layout: { rows: 1, cols: 3 },
         slots: [
-            { id: 's1', row: 0, col: 0 },
-            { id: 's2', row: 0, col: 1 },
-            { id: 's3', row: 0, col: 2 },
+            { id: 's1', x: 5, y: 25, width: 28, height: 50, rotation: 0 },
+            { id: 's2', x: 36, y: 25, width: 28, height: 50, rotation: 0 },
+            { id: 's3', x: 67, y: 25, width: 28, height: 50, rotation: 0 },
         ],
-        background: '#fafafa',
+        background: '#ffffff',
         borderColor: '#171717',
         borderWidth: 2,
         borderRadius: 0,
@@ -307,10 +350,12 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
     // ── 12. Rose Gold ──────────────────────────────────────────────
     {
         name: 'Rose Gold',
+        width: 420,
+        height: 630,
         layout: { rows: 2, cols: 1 },
         slots: [
-            { id: 's1', row: 0, col: 0 },
-            { id: 's2', row: 1, col: 0 },
+            { id: 's1', x: 10, y: 15, width: 80, height: 35, rotation: 0 },
+            { id: 's2', x: 10, y: 55, width: 80, height: 35, rotation: 0 },
         ],
         background: 'linear-gradient(180deg, #1c1917 0%, #292524 100%)',
         borderColor: '#d4a574',
@@ -319,20 +364,22 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
         gap: 10,
         padding: 32,
         textElements: [
-            createDefaultTextElement({ text: '❤ With Love', x: 50, y: 4, fontSize: 24, fontFamily: 'Georgia, serif', color: '#d4a574', fontStyle: 'italic', textShadow: '0 1px 3px rgba(0,0,0,0.3)' }),
+            createDefaultTextElement({ text: 'With Love', x: 50, y: 4, fontSize: 24, fontFamily: 'Georgia, serif', color: '#d4a574', fontStyle: 'italic', textShadow: '0 1px 3px rgba(0,0,0,0.3)' }),
             createDefaultTextElement({ id: 'sub1', text: 'FOREVER & ALWAYS', x: 50, y: 95, fontSize: 10, color: '#a8a29e', fontWeight: '600', letterSpacing: 5 }),
         ],
         watermarkText: 'SnapWrap',
     },
     // ── 13. Valentine's Day 💕 ────────────────────────────────────
     {
-        name: "Valentine's Day 💕",
+        name: "Valentine's Day",
+        width: 420,
+        height: 630,
         layout: { rows: 2, cols: 2 },
         slots: [
-            { id: 's1', row: 0, col: 0 },
-            { id: 's2', row: 0, col: 1 },
-            { id: 's3', row: 1, col: 0 },
-            { id: 's4', row: 1, col: 1 },
+            { id: 's1', x: 4, y: 15, width: 44, height: 35, rotation: 0 },
+            { id: 's2', x: 52, y: 15, width: 44, height: 35, rotation: 0 },
+            { id: 's3', x: 4, y: 55, width: 44, height: 35, rotation: 0 },
+            { id: 's4', x: 52, y: 55, width: 44, height: 35, rotation: 0 },
         ],
         background: 'linear-gradient(135deg, #4a0020 0%, #1a0010 40%, #2d0015 70%, #0d0008 100%)',
         borderColor: '#e11d48',
@@ -341,26 +388,130 @@ export const PRESET_TEMPLATES: Omit<TemplateConfig, 'id'>[] = [
         gap: 10,
         padding: 32,
         textElements: [
-            createDefaultTextElement({ text: '💕 Happy Valentine\'s 💕', x: 50, y: 4, fontSize: 22, fontFamily: "'Playfair Display', Georgia, serif", color: '#fda4af', fontWeight: '700', letterSpacing: 1, textShadow: '0 0 20px rgba(225,29,72,0.5)' }),
-            createDefaultTextElement({ id: 'hearts1', text: '♥', x: 8, y: 50, fontSize: 28, color: '#e11d48', opacity: 0.25, rotation: -15 }),
-            createDefaultTextElement({ id: 'hearts2', text: '♥', x: 92, y: 45, fontSize: 22, color: '#fb7185', opacity: 0.2, rotation: 12 }),
-            createDefaultTextElement({ id: 'hearts3', text: '♥', x: 5, y: 15, fontSize: 16, color: '#fb7185', opacity: 0.15, rotation: -25 }),
-            createDefaultTextElement({ id: 'hearts4', text: '♥', x: 95, y: 85, fontSize: 18, color: '#e11d48', opacity: 0.2, rotation: 20 }),
-            createDefaultTextElement({ id: 'date1', text: '14 February 2026 💌', x: 50, y: 95, fontSize: 12, fontFamily: "'Playfair Display', Georgia, serif", color: '#fecdd3', fontWeight: '400', fontStyle: 'italic', letterSpacing: 3, textShadow: '0 0 10px rgba(225,29,72,0.4)' }),
+            createDefaultTextElement({ text: 'Happy Valentine\'s', x: 50, y: 4, fontSize: 22, fontFamily: "'Playfair Display', Georgia, serif", color: '#fda4af', fontWeight: '700', letterSpacing: 1, textShadow: '0 0 20px rgba(225,29,72,0.5)' }),
+            createDefaultTextElement({ id: 'date1', text: '14 February 2026', x: 50, y: 95, fontSize: 12, fontFamily: "'Playfair Display', Georgia, serif", color: '#fecdd3', fontWeight: '400', fontStyle: 'italic', letterSpacing: 3, textShadow: '0 0 10px rgba(225,29,72,0.4)' }),
         ],
         watermarkText: 'SnapWrap',
+    },
+    // ── 14. Cerulean Romance 💙 ────────────────────────────────────
+    {
+        name: "Cerulean Romance",
+        width: 420,
+        height: 630,
+        layout: { rows: 3, cols: 2 },
+        slots: [
+            { id: 's1', x: 38, y: 5, width: 57, height: 60, rotation: 0 },
+            { id: 's2', x: 38, y: 68, width: 27, height: 25, rotation: 0 },
+            { id: 's3', x: 68, y: 68, width: 27, height: 25, rotation: 0 },
+        ],
+        background: '#f0f9ff',
+        backgroundImage: 'cerulean_romance_floral_bg_1778154139873.png',
+        borderColor: '#94a3b8',
+        borderWidth: 1,
+        borderRadius: 4,
+        gap: 12,
+        padding: 24,
+        textElements: [
+            createDefaultTextElement({ text: 'Garvin & Christina', x: 18, y: 42, fontSize: 26, fontFamily: "'Playfair Display', serif", color: '#1e293b', fontWeight: '700' }),
+            createDefaultTextElement({ id: 'date1', text: 'MAY 13, 2026', x: 18, y: 62, fontSize: 10, color: '#64748b', fontWeight: '900', letterSpacing: 4 }),
+        ],
+        watermarkText: 'SnapWrap',
+    },
+    // ── 15. Cinematic Panorama (Landscape) 🎞️ ──────────────────────────
+    {
+        name: "Cinematic Panorama",
+        width: 630,
+        height: 420,
+        layout: { rows: 1, cols: 3 },
+        slots: [
+            { id: 's1', x: 4, y: 15, width: 30, height: 70, rotation: 0 },
+            { id: 's2', x: 35, y: 15, width: 30, height: 70, rotation: 0 },
+            { id: 's3', x: 66, y: 15, width: 30, height: 70, rotation: 0 },
+        ],
+        background: '#09090b',
+        borderColor: '#3f3f46',
+        borderWidth: 1,
+        borderRadius: 4,
+        gap: 10,
+        padding: 20,
+        textElements: [
+            createDefaultTextElement({ text: 'WIDESCREEN SERIES', x: 50, y: 5, fontSize: 14, color: '#ffffff', fontWeight: '900', letterSpacing: 10 }),
+            createDefaultTextElement({ id: 'sub', text: 'SHOT ON LOCATION', x: 50, y: 92, fontSize: 8, color: '#71717a', fontWeight: '600', letterSpacing: 4 }),
+        ],
+        watermarkText: '',
+    },
+    // ── 16. Heritage Strip (2x6) 📽️ ──────────────────────────────────
+    {
+        name: "Heritage Strip",
+        width: 210,
+        height: 630,
+        layout: { rows: 4, cols: 1 },
+        slots: [
+            { id: 's1', x: 10, y: 8, width: 80, height: 18, rotation: 0 },
+            { id: 's2', x: 10, y: 28, width: 80, height: 18, rotation: 0 },
+            { id: 's3', x: 10, y: 48, width: 80, height: 18, rotation: 0 },
+            { id: 's4', x: 10, y: 68, width: 80, height: 18, rotation: 0 },
+        ],
+        background: '#fafafa',
+        borderColor: '#e5e7eb',
+        borderWidth: 0,
+        borderRadius: 0,
+        gap: 6,
+        padding: 12,
+        textElements: [
+            createDefaultTextElement({ text: 'EST. 2026', x: 50, y: 3, fontSize: 8, color: '#9ca3af', fontWeight: '800' }),
+            createDefaultTextElement({ id: 'sub', text: 'PHOTOSTRIP', x: 50, y: 92, fontSize: 12, fontFamily: 'serif', color: '#111827', fontWeight: '700', fontStyle: 'italic' }),
+        ],
+        watermarkText: 'SnapWrap',
+    },
+    // ── 17. Social Square (1:1) 📸 ──────────────────────────────────
+    {
+        name: "Social Square",
+        width: 600,
+        height: 600,
+        layout: { rows: 2, cols: 2 },
+        slots: [
+            { id: 's1', x: 5, y: 5, width: 44, height: 44, rotation: 0 },
+            { id: 's2', x: 51, y: 5, width: 44, height: 44, rotation: 0 },
+            { id: 's3', x: 5, y: 51, width: 44, height: 44, rotation: 0 },
+            { id: 's4', x: 51, y: 51, width: 44, height: 44, rotation: 0 },
+        ],
+        background: '#ffffff',
+        borderColor: '#f1f5f9',
+        borderWidth: 2,
+        borderRadius: 32,
+        gap: 10,
+        padding: 30,
+        textElements: [
+            createDefaultTextElement({ text: 'SQUARE COLLECTION', x: 50, y: 50, fontSize: 14, color: '#0f172a', fontWeight: '900', letterSpacing: 2, textShadow: '0 0 10px white' }),
+        ],
+        watermarkText: '',
     },
 ];
 
 function createBlankTemplate(rows: number, cols: number): Omit<TemplateConfig, 'id'> {
     const slots: PhotoSlot[] = [];
+    const pad = 10;
+    const gap = 4;
+    const slotW = (100 - pad * 2 - gap * (cols - 1)) / cols;
+    const slotH = (100 - pad * 2 - gap * (rows - 1)) / rows;
+
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-            slots.push({ id: `s${r}_${c}`, row: r, col: c });
+            slots.push({
+                id: `s_${r}_${c}`,
+                x: pad + c * (slotW + gap),
+                y: pad + r * (slotH + gap),
+                width: slotW,
+                height: slotH,
+                rotation: 0
+            });
         }
     }
     return {
         name: `Custom ${rows}×${cols}`,
+        width: 420,
+        height: 630,
         layout: { rows, cols },
         slots,
         background: '#ffffff',
@@ -390,7 +541,8 @@ interface TemplateDesignerProps {
 
 function useDraggable(
     previewRef: React.RefObject<HTMLDivElement | null>,
-    onMove: (id: string, x: number, y: number) => void
+    onMove: (id: string, x: number, y: number) => void,
+    onDragEnd?: () => void
 ) {
     const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
 
@@ -413,11 +565,12 @@ function useDraggable(
             dragState.current = null;
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
+            if (onDragEnd) onDragEnd();
         };
 
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
-    }, [previewRef, onMove]);
+    }, [previewRef, onMove, onDragEnd]);
 
     return startDrag;
 }
@@ -426,15 +579,59 @@ function useDraggable(
 
 export default function TemplateDesigner({ initialTemplate, onSave, onClose }: TemplateDesignerProps) {
     const [template, setTemplate] = useState<TemplateConfig>(() => {
-        if (initialTemplate) return { ...initialTemplate };
-        return { id: generateId(), ...PRESET_TEMPLATES[0] };
+        if (initialTemplate) return { ...initialTemplate } as TemplateConfig;
+        return { id: generateId(), ...PRESET_TEMPLATES[0] } as TemplateConfig;
     });
     const [activeTab, setActiveTab] = useState<DesignTab>('presets');
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
+    const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
     const [backgroundImage, setBackgroundImage] = useState<string | null>(initialTemplate?.backgroundImage || null);
     const [userStickers, setUserStickers] = useState<{ id: string; image_url: string }[]>([]);
     const [loadingStickers, setLoadingStickers] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const visualizerRef = useRef<TemplateVisualizerHandle>(null);
+
+    // ── Context Menu State ──
+    const [contextMenu, setContextMenu] = useState<{
+        x: number;
+        y: number;
+        elementId: string;
+        elementType: 'slot' | 'text' | 'sticker';
+    } | null>(null);
+
+    // ── History Management ──
+    const [history, setHistory] = useState<TemplateConfig[]>([(() => {
+        if (initialTemplate) return { ...initialTemplate };
+        return { id: generateId(), ...PRESET_TEMPLATES[0] };
+    })()]);
+    const [historyIndex, setHistoryIndex] = useState(0);
+
+    const pushToHistory = useCallback((newTemplate: TemplateConfig) => {
+        setHistory(prev => {
+            const next = prev.slice(0, historyIndex + 1);
+            // Limit history to 50 steps
+            if (next.length > 50) next.shift();
+            return [...next, JSON.parse(JSON.stringify(newTemplate))];
+        });
+        setHistoryIndex(prev => Math.min(prev + 1, 49));
+    }, [historyIndex]);
+
+    const undo = useCallback(() => {
+        if (historyIndex > 0) {
+            const prev = history[historyIndex - 1];
+            setTemplate(JSON.parse(JSON.stringify(prev)));
+            setHistoryIndex(historyIndex - 1);
+        }
+    }, [history, historyIndex]);
+
+    const redo = useCallback(() => {
+        if (historyIndex < history.length - 1) {
+            const next = history[historyIndex + 1];
+            setTemplate(JSON.parse(JSON.stringify(next)));
+            setHistoryIndex(historyIndex + 1);
+        }
+    }, [history, historyIndex]);
 
     const previewRef = useRef<HTMLDivElement>(null);
 
@@ -462,38 +659,96 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
 
         fetchUserStickers();
     }, []);
+function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onResize: (id: string, w: number, h: number, x: number, y: number) => void, onEnd?: () => void) {
+    const activeId = useRef<string | null>(null);
+    const handleType = useRef<string | null>(null);
+    const startData = useRef<{ x: number, y: number, w: number, h: number, mx: number, my: number } | null>(null);
 
-    // ── Background ───────────────────────────────────────────────────────
+    const handleMouseMove = useCallback((e: MouseEvent) => {
+        if (!activeId.current || !startData.current || !containerRef.current) return;
 
-    const resetToNoBackground = () => {
-        setBackgroundImage(null);
-        setTemplate(prev => ({ ...prev, backgroundImage: null, background: '#ffffff' }));
-    };
+        const rect = containerRef.current.getBoundingClientRect();
+        const dx = ((e.clientX - startData.current.mx) / rect.width) * 100;
+        const dy = ((e.clientY - startData.current.my) / rect.height) * 100;
 
-    const generateTemplateWithBg = (bg: string) => {
-        const base = { ...template, background: bg };
-        if (!backgroundImage) base.backgroundImage = null;
-        return base;
-    };
+        let { x, y, w, h } = startData.current;
+        const type = handleType.current;
 
-    const setTemplateBackgroundImage = useCallback((img: string | null) => {
-        setTemplate(prev => ({ ...prev, backgroundImage: img }));
-    }, []);
+        if (type?.includes('e')) w += dx;
+        if (type?.includes('w')) { w -= dx; x += dx; }
+        if (type?.includes('s')) h += dy;
+        if (type?.includes('n')) { h -= dy; y += dy; }
+
+        // Uniform scaling for single-dimension elements (Text/Stickers)
+        if (startData.current.h === 0) {
+            if (type?.includes('n')) w -= dy;
+            if (type?.includes('s')) w += dy;
+        }
+
+        onResize(activeId.current, Math.max(2, w), Math.max(2, h), x, y);
+    }, [onResize, containerRef]);
+
+    const handleMouseUp = useCallback(() => {
+        if (activeId.current) onEnd?.();
+        activeId.current = null;
+        handleType.current = null;
+        startData.current = null;
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+    }, [handleMouseMove, onEnd]);
+
+    const startResize = useCallback((e: React.MouseEvent, id: string, type: string, x: number, y: number, w: number, h: number) => {
+        e.stopPropagation();
+        e.preventDefault();
+        activeId.current = id;
+        handleType.current = type;
+        startData.current = { x, y, w, h, mx: e.clientX, my: e.clientY };
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+    }, [handleMouseMove, handleMouseUp]);
+
+    return startResize;
+}
 
     const update = useCallback((patch: Partial<TemplateConfig>) => {
         setTemplate((prev) => ({ ...prev, ...patch }));
     }, []);
 
     const applyPreset = useCallback((preset: Omit<TemplateConfig, 'id'>) => {
-        setTemplate({ id: generateId(), ...preset, backgroundImage: null, stickers: [] });
+        const next = { id: generateId(), ...preset, stickers: [] } as TemplateConfig;
+        setTemplate(next);
+        setBackgroundImage(preset.backgroundImage || null);
+        pushToHistory(next);
         setSelectedTextId(null);
         setSelectedStickerId(null);
-    }, []);
+        setSelectedSlotId(null);
+    }, [pushToHistory]);
 
     const setLayout = useCallback((rows: number, cols: number) => {
         const blank = createBlankTemplate(rows, cols);
-        update({ layout: blank.layout, slots: blank.slots });
-    }, [update]);
+        const next = { ...template, layout: blank.layout, slots: blank.slots };
+        setTemplate(next);
+        pushToHistory(next);
+    }, [template, pushToHistory]);
+
+    const updateSlot = useCallback((id: string, patch: Partial<PhotoSlot>) => {
+        setTemplate(prev => ({
+            ...prev,
+            slots: prev.slots.map(s => s.id === id ? { ...s, ...patch } : s),
+        }));
+    }, []);
+
+    const deleteSlot = useCallback((id: string) => {
+        setTemplate(prev => {
+            const next = {
+                ...prev,
+                slots: prev.slots.filter(s => s.id !== id),
+            };
+            pushToHistory(next);
+            return next;
+        });
+        setSelectedSlotId(null);
+    }, [pushToHistory]);
 
     // Text operations
     const updateText = useCallback((id: string, patch: Partial<TextElement>) => {
@@ -505,17 +760,25 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
 
     const addTextElement = useCallback(() => {
         const el = createDefaultTextElement();
-        setTemplate(prev => ({ ...prev, textElements: [...prev.textElements, el] }));
+        setTemplate(prev => {
+            const next = { ...prev, textElements: [...prev.textElements, el] };
+            pushToHistory(next);
+            return next;
+        });
         setSelectedTextId(el.id);
-    }, []);
+    }, [pushToHistory]);
 
     const deleteTextElement = useCallback((id: string) => {
-        setTemplate(prev => ({
-            ...prev,
-            textElements: prev.textElements.filter(t => t.id !== id),
-        }));
+        setTemplate(prev => {
+            const next = {
+                ...prev,
+                textElements: prev.textElements.filter(t => t.id !== id),
+            };
+            pushToHistory(next);
+            return next;
+        });
         setSelectedTextId(null);
-    }, []);
+    }, [pushToHistory]);
 
     const moveText = useCallback((id: string, x: number, y: number) => {
         updateText(id, { x, y });
@@ -528,14 +791,24 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
         x: 50,
         y: 50,
         width: 100,
+        height: 0,
         rotation: 0,
+        cropX: 0,
+        cropY: 0,
+        flipX: false,
+        flipY: false,
+        opacity: 1,
     });
 
     const addSticker = useCallback((src: string) => {
         const stk = createDefaultSticker(src);
-        setTemplate(prev => ({ ...prev, stickers: [...(prev.stickers || []), stk] }));
+        setTemplate(prev => {
+            const next = { ...prev, stickers: [...(prev.stickers || []), stk] };
+            pushToHistory(next);
+            return next;
+        });
         setSelectedStickerId(stk.id);
-    }, []);
+    }, [pushToHistory]);
 
     const updateSticker = useCallback((id: string, patch: Partial<Sticker>) => {
         setTemplate(prev => ({
@@ -545,12 +818,16 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     }, []);
 
     const deleteSticker = useCallback((id: string) => {
-        setTemplate(prev => ({
-            ...prev,
-            stickers: (prev.stickers || []).filter(s => s.id !== id),
-        }));
+        setTemplate(prev => {
+            const next = {
+                ...prev,
+                stickers: (prev.stickers || []).filter(s => s.id !== id),
+            };
+            pushToHistory(next);
+            return next;
+        });
         setSelectedStickerId(null);
-    }, []);
+    }, [pushToHistory]);
 
     const moveSticker = useCallback((id: string, x: number, y: number) => {
         updateSticker(id, { x, y });
@@ -560,12 +837,195 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     const moveElement = useCallback((id: string, x: number, y: number) => {
         if (id.startsWith('stk_')) {
             moveSticker(id, x, y);
-        } else {
+        } else if (id.startsWith('txt_')) {
             moveText(id, x, y);
+        } else {
+            updateSlot(id, { x, y });
         }
-    }, [moveSticker, moveText]);
+    }, [moveSticker, moveText, updateSlot]);
 
-    const startDrag = useDraggable(previewRef, moveElement);
+    const resizeElement = useCallback((id: string, w: number, h: number, x: number, y: number) => {
+        if (id.startsWith('stk_')) {
+            updateSticker(id, { width: w * (template.width / 100), x, y });
+        } else if (id.startsWith('txt_')) {
+            updateText(id, { fontSize: Math.max(8, w * (template.width / 100) / 4), x, y });
+        } else {
+            updateSlot(id, { width: w, height: h, x, y });
+        }
+    }, [updateSticker, updateText, updateSlot, template.width]);
+
+    const startDrag = useDraggable(previewRef, moveElement, () => pushToHistory(template));
+    const startResize = useResizable(previewRef, resizeElement, () => pushToHistory(template));
+
+    // ── Context Menu Handlers ──
+    const openContextMenu = useCallback((e: React.MouseEvent, elementId: string, elementType: 'slot' | 'text' | 'sticker') => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({ x: e.clientX, y: e.clientY, elementId, elementType });
+        // Auto-select the element
+        if (elementType === 'slot') { setSelectedSlotId(elementId); setSelectedTextId(null); setSelectedStickerId(null); }
+        else if (elementType === 'text') { setSelectedTextId(elementId); setSelectedSlotId(null); setSelectedStickerId(null); }
+        else if (elementType === 'sticker') { setSelectedStickerId(elementId); setSelectedSlotId(null); setSelectedTextId(null); }
+    }, []);
+
+    const duplicateElement = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        if (type === 'slot') {
+            const src = template.slots.find(s => s.id === id);
+            if (!src) return;
+            const newId = `s${template.slots.length + 1}`;
+            const dup = { ...src, id: newId, x: Math.min(src.x + 5, 90), y: Math.min(src.y + 5, 90) };
+            setTemplate(prev => { const next = { ...prev, slots: [...prev.slots, dup] }; pushToHistory(next); return next; });
+            setSelectedSlotId(newId);
+        } else if (type === 'text') {
+            const src = template.textElements.find(t => t.id === id);
+            if (!src) return;
+            const dup = { ...src, id: `txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, x: Math.min(src.x + 5, 95), y: Math.min(src.y + 5, 95) };
+            setTemplate(prev => { const next = { ...prev, textElements: [...prev.textElements, dup] }; pushToHistory(next); return next; });
+            setSelectedTextId(dup.id);
+        } else if (type === 'sticker') {
+            const src = (template.stickers || []).find(s => s.id === id);
+            if (!src) return;
+            const dup = { ...src, id: `stk_${Date.now()}`, x: Math.min(src.x + 5, 95), y: Math.min(src.y + 5, 95) };
+            setTemplate(prev => { const next = { ...prev, stickers: [...(prev.stickers || []), dup] }; pushToHistory(next); return next; });
+            setSelectedStickerId(dup.id);
+        }
+        setContextMenu(null);
+    }, [template, pushToHistory]);
+
+    const resetElementPosition = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        if (type === 'slot') updateSlot(id, { x: 10, y: 10, rotation: 0 });
+        else if (type === 'text') updateText(id, { x: 50, y: 50, rotation: 0 });
+        else if (type === 'sticker') updateSticker(id, { x: 50, y: 50, rotation: 0 });
+        pushToHistory(template);
+        setContextMenu(null);
+    }, [updateSlot, updateText, updateSticker, pushToHistory, template]);
+
+    const resetElementRotation = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        if (type === 'slot') updateSlot(id, { rotation: 0 });
+        else if (type === 'text') updateText(id, { rotation: 0 });
+        else if (type === 'sticker') updateSticker(id, { rotation: 0 });
+        pushToHistory(template);
+        setContextMenu(null);
+    }, [updateSlot, updateText, updateSticker, pushToHistory, template]);
+
+    const bringToFront = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        if (type === 'slot') {
+            setTemplate(prev => {
+                const idx = prev.slots.findIndex(s => s.id === id);
+                if (idx < 0) return prev;
+                const slots = [...prev.slots];
+                const [item] = slots.splice(idx, 1);
+                slots.push(item);
+                const next = { ...prev, slots };
+                pushToHistory(next);
+                return next;
+            });
+        } else if (type === 'text') {
+            setTemplate(prev => {
+                const idx = prev.textElements.findIndex(t => t.id === id);
+                if (idx < 0) return prev;
+                const textElements = [...prev.textElements];
+                const [item] = textElements.splice(idx, 1);
+                textElements.push(item);
+                const next = { ...prev, textElements };
+                pushToHistory(next);
+                return next;
+            });
+        } else if (type === 'sticker') {
+            setTemplate(prev => {
+                const stickers = [...(prev.stickers || [])];
+                const idx = stickers.findIndex(s => s.id === id);
+                if (idx < 0) return prev;
+                const [item] = stickers.splice(idx, 1);
+                stickers.push(item);
+                const next = { ...prev, stickers };
+                pushToHistory(next);
+                return next;
+            });
+        }
+        setContextMenu(null);
+    }, [pushToHistory]);
+
+    const sendToBack = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        if (type === 'slot') {
+            setTemplate(prev => {
+                const idx = prev.slots.findIndex(s => s.id === id);
+                if (idx < 0) return prev;
+                const slots = [...prev.slots];
+                const [item] = slots.splice(idx, 1);
+                slots.unshift(item);
+                const next = { ...prev, slots };
+                pushToHistory(next);
+                return next;
+            });
+        } else if (type === 'text') {
+            setTemplate(prev => {
+                const idx = prev.textElements.findIndex(t => t.id === id);
+                if (idx < 0) return prev;
+                const textElements = [...prev.textElements];
+                const [item] = textElements.splice(idx, 1);
+                textElements.unshift(item);
+                const next = { ...prev, textElements };
+                pushToHistory(next);
+                return next;
+            });
+        } else if (type === 'sticker') {
+            setTemplate(prev => {
+                const stickers = [...(prev.stickers || [])];
+                const idx = stickers.findIndex(s => s.id === id);
+                if (idx < 0) return prev;
+                const [item] = stickers.splice(idx, 1);
+                stickers.unshift(item);
+                const next = { ...prev, stickers };
+                pushToHistory(next);
+                return next;
+            });
+        }
+        setContextMenu(null);
+    }, [pushToHistory]);
+
+    const deleteFromContextMenu = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        if (type === 'slot') deleteSlot(id);
+        else if (type === 'text') deleteTextElement(id);
+        else if (type === 'sticker') deleteSticker(id);
+        setContextMenu(null);
+    }, [deleteSlot, deleteTextElement, deleteSticker]);
+
+    // Close context menu on any click
+    useEffect(() => {
+        const handleClick = () => setContextMenu(null);
+        if (contextMenu) window.addEventListener('click', handleClick);
+        return () => window.removeEventListener('click', handleClick);
+    }, [contextMenu]);
+
+    // ── Keyboard Shortcuts ──
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Undo/Redo
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                e.preventDefault();
+                if (e.shiftKey) redo();
+                else undo();
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+                e.preventDefault();
+                redo();
+            }
+
+            // Delete
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                // Only if not typing in an input
+                if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+                
+                if (selectedSlotId) deleteSlot(selectedSlotId);
+                else if (selectedTextId) deleteTextElement(selectedTextId);
+                else if (selectedStickerId) deleteSticker(selectedStickerId);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [undo, redo, selectedSlotId, selectedTextId, selectedStickerId, deleteSlot, deleteTextElement, deleteSticker]);
 
     const handleStickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -633,123 +1093,195 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
         reader.readAsDataURL(file);
     };
 
-    const handleSave = () => {
-        onSave(template);
+    const handleSaveClick = async () => {
+        if (isSaving) return;
+        setIsSaving(true);
+        try {
+            let finalTemplate = { ...template };
+            
+            // Generate snapshots if visualizer is ready
+            if (visualizerRef.current) {
+                const snapshots = await visualizerRef.current.getSnapshot();
+                finalTemplate.backgroundSnapshot = snapshots.background;
+                finalTemplate.foregroundSnapshot = snapshots.foreground;
+            }
+
+            onSave(finalTemplate);
+        } catch (error) {
+            console.error('Error generating snapshots:', error);
+            onSave(template); // Fallback to basic save
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const selectedText = template.textElements.find(t => t.id === selectedTextId);
     const selectedSticker = (template.stickers || []).find(s => s.id === selectedStickerId);
 
     // ── Tabs ─────────────────────────────────────────────────────────────
-
-    const tabs: { key: DesignTab; label: string; icon: string }[] = [
-        { key: 'presets', label: 'Presets', icon: '🎨' },
-        { key: 'layout', label: 'Layout', icon: '⊞' },
-        { key: 'style', label: 'Style', icon: '🖌️' },
-        { key: 'text', label: 'Text', icon: 'Aa' },
-        { key: 'stickers', label: 'Stickers', icon: '⭐' },
+    const tabs: { key: DesignTab; label: string; icon: any }[] = [
+        { key: 'presets', label: 'Presets', icon: Palette },
+        { key: 'layout', label: 'Layout', icon: Layout },
+        { key: 'style', label: 'Style', icon: Palette },
+        { key: 'text', label: 'Text', icon: Type },
+        { key: 'stickers', label: 'Stickers', icon: Star },
     ];
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="bg-white rounded-3xl shadow-2xl w-[95vw] max-w-[1400px] h-[90vh] flex flex-col overflow-hidden">
-                {/* Modal Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-                    <div>
-                        <h2 className="text-xl font-bold text-gray-900">
-                            {initialTemplate ? 'Edit Template' : 'Create Template'}
-                        </h2>
-                        <p className="text-sm text-gray-500">Design your photo booth layout</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <input
-                            type="text"
-                            value={template.name}
-                            onChange={(e) => update({ name: e.target.value })}
-                            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-900 w-48"
-                            placeholder="Template name"
-                        />
-                        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-                        <Button variant="primary" onClick={handleSave}>💾 Save</Button>
-                    </div>
+        <AnimatePresence>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[500] bg-neutral-900/95 backdrop-blur-xl flex flex-col font-sans"
+            >
+                {/* Hidden Visualizer for Snapshotting */}
+                <div className="fixed -top-[5000px] -left-[5000px] pointer-events-none opacity-0">
+                    <TemplateVisualizer 
+                        ref={visualizerRef}
+                        template={template}
+                    />
                 </div>
+                <style dangerouslySetInnerHTML={{ __html: `
+                    .custom-scrollbar::-webkit-scrollbar {
+                        width: 4px;
+                        height: 4px;
+                    }
+                    .custom-scrollbar::-webkit-scrollbar-track {
+                        background: transparent;
+                    }
+                    .custom-scrollbar::-webkit-scrollbar-thumb {
+                        background: rgba(255,255,255,0.1);
+                        border-radius: 10px;
+                    }
+                    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+                        background: rgba(255,255,255,0.2);
+                    }
+                `}} />
 
-                {/* Modal Body */}
+                {/* Header */}
+                <header className="h-20 shrink-0 bg-neutral-950 border-b border-white/5 flex items-center justify-between px-10">
+                    <div className="flex items-center gap-6">
+                        <div className="flex flex-col">
+                            <h1 className="text-xl font-black text-white uppercase tracking-tight">Template Protocol</h1>
+                            <p className="text-[10px] font-black text-neutral-500 uppercase tracking-widest">Visual Matrix Architecture</p>
+                        </div>
+                        <div className="h-8 w-px bg-white/10" />
+                        <div className="flex items-center gap-4">
+                            <label className="text-[9px] font-black text-neutral-500 uppercase tracking-widest">Matrix Identity</label>
+                            <input
+                                type="text"
+                                value={template.name}
+                                onChange={(e) => update({ name: e.target.value })}
+                                className="bg-neutral-900 border border-white/5 rounded-full px-5 py-2 text-xs font-black text-white focus:outline-none focus:border-blue-500/50 transition-all w-64"
+                                placeholder="IDENT_STRING"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-1 bg-neutral-900 border border-white/5 rounded-full p-1 mr-4">
+                            <button 
+                                onClick={undo} 
+                                disabled={historyIndex === 0}
+                                className="w-9 h-9 flex items-center justify-center hover:bg-white/5 disabled:opacity-20 transition-all rounded-full text-neutral-400"
+                                title="Undo (Ctrl+Z)"
+                            >
+                                <RotateCw size={16} className="scale-x-[-1]" />
+                            </button>
+                            <button 
+                                onClick={redo} 
+                                disabled={historyIndex === history.length - 1}
+                                className="w-9 h-9 flex items-center justify-center hover:bg-white/5 disabled:opacity-20 transition-all rounded-full text-neutral-400"
+                                title="Redo (Ctrl+Shift+Z)"
+                            >
+                                <RotateCw size={16} />
+                            </button>
+                        </div>
+
+                        <button onClick={onClose} className="px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest text-neutral-400 hover:text-white transition-all">Cancel</button>
+                        <button 
+                            onClick={handleSaveClick}
+                            disabled={isSaving}
+                            className="px-8 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 text-white bg-blue-600 hover:scale-105 active:scale-95 disabled:opacity-50"
+                        >
+                            {isSaving ? (
+                                <span className="flex items-center gap-2">
+                                    <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    Snapshotting...
+                                </span>
+                            ) : (
+                                <>
+                                    <Save size={14} /> 
+                                    Commit Design
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </header>
+
                 <div className="flex-1 flex overflow-hidden">
-                    {/* LEFT: Controls */}
-                    <div className="w-80 border-r border-gray-200 flex flex-col overflow-hidden">
-                        {/* Tab bar */}
-                        <div className="grid grid-cols-4 gap-1 bg-gray-100 m-3 rounded-xl p-1 shrink-0">
+                    {/* Sidebar */}
+                    <aside className="w-80 bg-neutral-950 border-r border-white/5 flex flex-col overflow-hidden">
+                        {/* Tab Bar */}
+                        <div className="grid grid-cols-5 gap-1 p-3 bg-white/5 border-b border-white/5">
                             {tabs.map((t) => (
                                 <button
                                     key={t.key}
                                     onClick={() => setActiveTab(t.key)}
-                                    className={`py-2 rounded-lg text-xs font-semibold transition-all ${activeTab === t.key
-                                        ? 'bg-white shadow text-gray-900'
-                                        : 'text-gray-500 hover:text-gray-700'
-                                        }`}
+                                    className={`flex flex-col items-center gap-1.5 py-3 rounded-lg transition-all ${
+                                        activeTab === t.key 
+                                        ? 'bg-white text-neutral-900 shadow-xl' 
+                                        : 'text-neutral-500 hover:text-white'
+                                    }`}
                                 >
-                                    <span className="block text-sm">{t.icon}</span>
-                                    {t.label}
+                                    <t.icon size={14} />
+                                    <span className="text-[7px] font-black uppercase tracking-tighter">{t.label}</span>
                                 </button>
                             ))}
                         </div>
 
-                        {/* Panel content */}
-                        <div className="flex-1 overflow-y-auto px-4 pb-4">
+                        <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
                             {/* ── Presets ── */}
                             {activeTab === 'presets' && (
-                                <div className="space-y-3">
-                                    <p className="text-sm text-gray-600 font-medium">Start from a preset</p>
+                                <section className="space-y-4">
+                                    <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Architecture Presets</h3>
                                     <div className="grid grid-cols-2 gap-3">
                                         {PRESET_TEMPLATES.map((preset, i) => (
                                             <button
                                                 key={i}
                                                 onClick={() => applyPreset(preset)}
-                                                className={`text-left p-3 rounded-xl border-2 transition-all hover:shadow-md ${template.name === preset.name
-                                                    ? 'border-indigo-500 bg-indigo-50'
-                                                    : 'border-gray-200 hover:border-gray-300 bg-white'
-                                                    }`}
+                                                className={`group relative rounded-xl overflow-hidden border transition-all ${
+                                                    template.name === preset.name 
+                                                    ? 'border-blue-500 shadow-2xl shadow-blue-500/20' 
+                                                    : 'border-white/5 hover:border-white/20 bg-white/5'
+                                                }`}
+                                                style={{ aspectRatio: `${preset.width} / ${preset.height}` }}
                                             >
-                                                <div
-                                                    className="w-full aspect-[3/4] rounded-lg mb-2 overflow-hidden"
-                                                    style={{ background: preset.background, padding: 4 }}
-                                                >
-                                                    <div
-                                                        className="w-full h-full grid"
-                                                        style={{
+                                                <div className="absolute inset-0 p-1">
+                                                    <div className="w-full h-full rounded-lg overflow-hidden relative" style={{ background: preset.background }}>
+                                                        <div className="absolute inset-0 grid" style={{
                                                             gridTemplateRows: `repeat(${preset.layout.rows}, 1fr)`,
                                                             gridTemplateColumns: `repeat(${preset.layout.cols}, 1fr)`,
-                                                            gap: 2,
-                                                        }}
-                                                    >
-                                                        {preset.slots.map(s => (
-                                                            <div
-                                                                key={s.id}
-                                                                className="rounded"
-                                                                style={{
-                                                                    border: `1px solid ${preset.borderColor}`,
-                                                                    background: 'rgba(0,0,0,0.08)',
-                                                                    borderRadius: Math.min(preset.borderRadius / 4, 6),
-                                                                }}
-                                                            />
-                                                        ))}
+                                                            gap: 1, padding: 2
+                                                        }}>
+                                                            {preset.slots.map(s => (
+                                                                <div key={s.id} className="bg-black/10 rounded-sm border border-white/10" />
+                                                            ))}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                <p className="text-xs font-semibold text-gray-900 truncate">{preset.name}</p>
-                                                <p className="text-[10px] text-gray-500">
-                                                    {preset.layout.rows}×{preset.layout.cols} · {preset.slots.length} photos
-                                                </p>
+                                                <div className="absolute inset-x-0 bottom-0 bg-neutral-900/90 backdrop-blur-md p-2 border-t border-white/5">
+                                                    <p className="text-[8px] font-black text-white uppercase truncate">{preset.name}</p>
+                                                    <p className="text-[6px] font-black text-neutral-500 uppercase tracking-widest">{preset.layout.rows}x{preset.layout.cols} Matrix</p>
+                                                </div>
                                             </button>
                                         ))}
                                     </div>
-                                </div>
+                                </section>
                             )}
 
                             {/* ── Layout ── */}
                             {activeTab === 'layout' && (
-                                <div className="space-y-4">
-                                    <p className="text-sm text-gray-600 font-medium">Choose a grid layout</p>
+                                <section className="space-y-6">
+                                    <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Matrix Topology</h3>
                                     <div className="grid grid-cols-3 gap-3">
                                         {[
                                             [1, 1], [1, 2], [1, 3],
@@ -759,453 +1291,752 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
                                             <button
                                                 key={`${r}x${c}`}
                                                 onClick={() => setLayout(r, c)}
-                                                className={`p-3 rounded-xl border-2 transition-all ${template.layout.rows === r && template.layout.cols === c
-                                                    ? 'border-indigo-500 bg-indigo-50'
-                                                    : 'border-gray-200 hover:border-gray-300 bg-white'
-                                                    }`}
+                                                className={`flex flex-col items-center gap-2 p-3 rounded-xl border transition-all group ${
+                                                    template.layout.rows === r && template.layout.cols === c
+                                                    ? 'bg-blue-600 border-blue-400 shadow-xl'
+                                                    : 'bg-neutral-900 border-white/5 hover:border-white/20'
+                                                }`}
                                             >
-                                                <div
-                                                    className="w-full aspect-square grid gap-1"
-                                                    style={{
-                                                        gridTemplateRows: `repeat(${r}, 1fr)`,
-                                                        gridTemplateColumns: `repeat(${c}, 1fr)`,
-                                                    }}
+                                                <div className="w-full aspect-[3/4] grid gap-1 p-1 bg-black/20 rounded"
+                                                    style={{ gridTemplateRows: `repeat(${r}, 1fr)`, gridTemplateColumns: `repeat(${c}, 1fr)` }}
                                                 >
                                                     {Array.from({ length: r * c }).map((_, i) => (
-                                                        <div key={i} className="bg-gray-200 rounded" />
+                                                        <div key={i} className={`rounded-sm ${template.layout.rows === r && template.layout.cols === c ? 'bg-white/40' : 'bg-white/10'}`} />
                                                     ))}
                                                 </div>
-                                                <p className="text-xs font-semibold text-gray-700 text-center mt-2">{r}×{c}</p>
+                                                <span className={`text-[9px] font-black uppercase tracking-widest ${template.layout.rows === r && template.layout.cols === c ? 'text-white' : 'text-neutral-500'}`}>{r}×{c}</span>
                                             </button>
                                         ))}
                                     </div>
-                                </div>
+
+                                    <div className="pt-6 border-t border-white/5 space-y-4">
+                                        <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Canvas Orientation</h3>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {[
+                                                { label: 'Portrait (4x6)', w: 420, h: 630 },
+                                                { label: 'Landscape (6x4)', w: 630, h: 420 },
+                                                { label: 'Square (1:1)', w: 600, h: 600 },
+                                                { label: 'Strip (2x6)', w: 210, h: 630 },
+                                            ].map((opt) => (
+                                                <button
+                                                    key={opt.label}
+                                                    onClick={() => {
+                                                        const next = { ...template, width: opt.w, height: opt.h };
+                                                        setTemplate(next);
+                                                        pushToHistory(next);
+                                                    }}
+                                                    className={`px-4 py-3 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${
+                                                        template.width === opt.w && template.height === opt.h
+                                                        ? 'bg-blue-600 border-blue-400 text-white shadow-lg'
+                                                        : 'bg-neutral-900 border-white/5 text-neutral-400 hover:border-white/20'
+                                                    }`}
+                                                >
+                                                    {opt.label}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-3 pt-4 border-t border-white/5">
+                                            <div className="space-y-2">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Custom Width (px)</label>
+                                                <div className="relative group">
+                                                    <input 
+                                                        type="number" 
+                                                        value={template.width}
+                                                        onChange={(e) => update({ width: Math.max(100, +e.target.value) })}
+                                                        onBlur={() => pushToHistory(template)}
+                                                        className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-white outline-none focus:border-blue-500 transition-all"
+                                                    />
+                                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-600 text-[8px] font-black">PX</div>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Custom Height (px)</label>
+                                                <div className="relative group">
+                                                    <input 
+                                                        type="number" 
+                                                        value={template.height}
+                                                        onChange={(e) => update({ height: Math.max(100, +e.target.value) })}
+                                                        onBlur={() => pushToHistory(template)}
+                                                        className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-white outline-none focus:border-blue-500 transition-all"
+                                                    />
+                                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-600 text-[8px] font-black">PX</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="pt-6 border-t border-white/5 space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Layer Controller</h3>
+                                            <button 
+                                                onClick={() => {
+                                                    const id = `s${template.slots.length + 1}`;
+                                                    updateSlot(id, { id, x: 25, y: 25, width: 50, height: 40, rotation: 0 });
+                                                    setTemplate(prev => ({ ...prev, slots: [...prev.slots, { id, x: 25, y: 25, width: 50, height: 40, rotation: 0 }] }));
+                                                    setSelectedSlotId(id);
+                                                }}
+                                                className="flex items-center gap-2 px-3 py-1.5 bg-blue-500 hover:bg-blue-400 text-white rounded-lg transition-all"
+                                            >
+                                                <Plus size={12} />
+                                                <span className="text-[8px] font-black uppercase tracking-widest">Add Slot</span>
+                                            </button>
+                                        </div>
+
+                                        {selectedSlotId && (
+                                            <div className="bg-neutral-900/50 border border-white/5 rounded-2xl p-4 space-y-6">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Active Slot: {selectedSlotId}</span>
+                                                    <button onClick={() => deleteSlot(selectedSlotId)} className="text-red-500 hover:text-red-400">
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
+
+                                                <div className="space-y-4">
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Width (%)</label>
+                                                            <span className="text-[9px] font-black text-white">{Math.round(template.slots.find(s => s.id === selectedSlotId)?.width || 0)}%</span>
+                                                        </div>
+                                                        <input type="range" min={5} max={100} value={template.slots.find(s => s.id === selectedSlotId)?.width || 0} onChange={(e) => updateSlot(selectedSlotId, { width: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                    </div>
+
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Height (%)</label>
+                                                            <span className="text-[9px] font-black text-white">{Math.round(template.slots.find(s => s.id === selectedSlotId)?.height || 0)}%</span>
+                                                        </div>
+                                                        <input type="range" min={5} max={100} value={template.slots.find(s => s.id === selectedSlotId)?.height || 0} onChange={(e) => updateSlot(selectedSlotId, { height: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                    </div>
+
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Rotation</label>
+                                                            <span className="text-[9px] font-black text-white">{template.slots.find(s => s.id === selectedSlotId)?.rotation || 0}°</span>
+                                                        </div>
+                                                        <input type="range" min={-180} max={180} value={template.slots.find(s => s.id === selectedSlotId)?.rotation || 0} onChange={(e) => updateSlot(selectedSlotId, { rotation: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </section>
                             )}
 
                             {/* ── Style ── */}
                             {activeTab === 'style' && (
-                                <div className="space-y-5">
-                                    <p className="text-sm text-gray-600 font-medium">Customize appearance</p>
+                                <section className="space-y-8">
+                                    <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Visual Configuration</h3>
+                                    
+                                    <div className="space-y-4">
+                                        <div className="flex flex-col gap-2">
+                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Base Color</label>
+                                            <div className="flex items-center gap-3 bg-neutral-900 border border-white/5 rounded-xl p-2">
+                                                <input type="color" value={template.background.startsWith('#') ? template.background : '#ffffff'} onChange={(e) => update({ background: e.target.value })} className="w-8 h-8 rounded-lg cursor-pointer border-0 bg-transparent" />
+                                                <input type="text" value={template.background} onChange={(e) => update({ background: e.target.value })} className="flex-1 bg-transparent text-[10px] font-black text-white uppercase outline-none" placeholder="#HEX OR GRADIENT" />
+                                            </div>
+                                        </div>
 
-                                    <div>
-                                        <label className="block text-xs font-semibold text-gray-700 mb-1">Background Color</label>
-                                        <div className="flex items-center gap-2">
-                                            <input type="color" value={template.background.startsWith('#') ? template.background : '#ffffff'} onChange={(e) => update({ background: e.target.value })} className="w-10 h-10 rounded-lg border border-gray-300 cursor-pointer" />
-                                            <input type="text" value={template.background} onChange={(e) => update({ background: e.target.value })} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900" placeholder="#fff or gradient..." />
+                                        <div className="flex flex-col gap-2">
+                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Background Layer</label>
+                                            <div className="relative group">
+                                                <input type="file" accept="image/*" onChange={handleBgUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
+                                                <div className="w-full py-6 rounded-xl border border-dashed border-white/10 group-hover:border-blue-500/50 group-hover:bg-blue-500/5 transition-all flex flex-col items-center justify-center gap-2">
+                                                    <ImageIcon size={18} className="text-neutral-500 group-hover:text-blue-400" />
+                                                    <span className="text-[8px] font-black text-neutral-500 uppercase tracking-widest group-hover:text-white">Upload Pattern</span>
+                                                </div>
+                                            </div>
+                                            {backgroundImage && (
+                                                <button onClick={() => setBackgroundImage(null)} className="text-[7px] font-black text-red-500 uppercase tracking-widest hover:text-red-400 transition-all">Discard Layer</button>
+                                            )}
                                         </div>
                                     </div>
 
-                                    <div>
-                                        <label className="block text-xs font-semibold text-gray-700 mb-1">Background Image</label>
-                                        <input type="file" accept="image/*" onChange={handleBgUpload} className="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-700 cursor-pointer" />
-                                        {backgroundImage && (
-                                            <button onClick={() => setBackgroundImage(null)} className="mt-1 text-xs text-red-600 hover:underline">Remove image</button>
-                                        )}
-                                    </div>
+                                    <div className="space-y-6 pt-6 border-t border-white/5">
+                                        <div className="space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Padding</label>
+                                                <span className="text-[9px] font-black text-white">{template.padding}px</span>
+                                            </div>
+                                            <input type="range" min={0} max={100} value={template.padding} onChange={(e) => update({ padding: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                        </div>
+                                        <div className="space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Internal Gap</label>
+                                                <span className="text-[9px] font-black text-white">{template.gap}px</span>
+                                            </div>
+                                            <input type="range" min={0} max={50} value={template.gap} onChange={(e) => update({ gap: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                        </div>
+                                        <div className="space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Corner Radius</label>
+                                                <span className="text-[9px] font-black text-white">{template.borderRadius}px</span>
+                                            </div>
+                                            <input type="range" min={0} max={60} value={template.borderRadius} onChange={(e) => update({ borderRadius: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                        </div>
 
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div>
-                                            <label className="block text-xs font-semibold text-gray-700 mb-1">Border Color</label>
-                                            <input type="color" value={template.borderColor.startsWith('#') ? template.borderColor : '#e2e8f0'} onChange={(e) => update({ borderColor: e.target.value })} className="w-full h-9 rounded-lg border border-gray-300 cursor-pointer" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-semibold text-gray-700 mb-1">Border Width</label>
-                                            <input type="range" min={0} max={10} value={template.borderWidth} onChange={(e) => update({ borderWidth: parseInt(e.target.value) })} className="w-full accent-indigo-600" />
-                                            <span className="text-xs text-gray-500">{template.borderWidth}px</span>
-                                        </div>
-                                    </div>
+                                        <div className="pt-4 space-y-4">
+                                            <div className="flex flex-col gap-2">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Boundary Logic</label>
+                                                <div className="flex items-center gap-3 bg-neutral-900 border border-white/5 rounded-xl p-2">
+                                                    <input type="color" value={template.borderColor} onChange={(e) => update({ borderColor: e.target.value })} className="w-8 h-8 rounded-lg cursor-pointer border-0 bg-transparent" />
+                                                    <div className="flex-1 space-y-1">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[7px] font-black text-neutral-500 uppercase">Weight</span>
+                                                            <span className="text-[8px] font-black text-white">{template.borderWidth}px</span>
+                                                        </div>
+                                                        <input type="range" min={0} max={20} value={template.borderWidth} onChange={(e) => update({ borderWidth: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                    </div>
+                                                </div>
+                                            </div>
 
-                                    <div className="grid grid-cols-3 gap-3">
-                                        <div>
-                                            <label className="block text-xs font-semibold text-gray-700 mb-1">Radius</label>
-                                            <input type="range" min={0} max={40} value={template.borderRadius} onChange={(e) => update({ borderRadius: parseInt(e.target.value) })} className="w-full accent-indigo-600" />
-                                            <span className="text-xs text-gray-500">{template.borderRadius}px</span>
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-semibold text-gray-700 mb-1">Gap</label>
-                                            <input type="range" min={0} max={24} value={template.gap} onChange={(e) => update({ gap: parseInt(e.target.value) })} className="w-full accent-indigo-600" />
-                                            <span className="text-xs text-gray-500">{template.gap}px</span>
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-semibold text-gray-700 mb-1">Padding</label>
-                                            <input type="range" min={0} max={48} value={template.padding} onChange={(e) => update({ padding: parseInt(e.target.value) })} className="w-full accent-indigo-600" />
-                                            <span className="text-xs text-gray-500">{template.padding}px</span>
+                                            <div className="flex flex-col gap-2">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Brand Identity</label>
+                                                <div className="bg-neutral-900 border border-white/5 rounded-xl p-2 flex items-center gap-2">
+                                                    <Hash size={12} className="text-neutral-500 ml-2" />
+                                                    <input 
+                                                        type="text" 
+                                                        value={template.watermarkText} 
+                                                        onChange={(e) => update({ watermarkText: e.target.value })} 
+                                                        onBlur={() => pushToHistory(template)}
+                                                        className="flex-1 bg-transparent text-[10px] font-black text-white uppercase outline-none px-2" 
+                                                        placeholder="WATERMARK" 
+                                                    />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
-
-                                    <div>
-                                        <label className="block text-xs font-semibold text-gray-700 mb-1">Watermark</label>
-                                        <input type="text" value={template.watermarkText} onChange={(e) => update({ watermarkText: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900" placeholder="Brand name..." />
-                                    </div>
-                                </div>
+                                </section>
                             )}
 
                             {/* ── Text ── */}
                             {activeTab === 'text' && (
-                                <div className="space-y-4">
+                                <section className="space-y-8">
                                     <div className="flex items-center justify-between">
-                                        <p className="text-sm text-gray-600 font-medium">Text Elements</p>
-                                        <Button variant="secondary" size="sm" onClick={addTextElement}>+ Add</Button>
+                                        <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Text Layers</h3>
+                                        <button onClick={addTextElement} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-600 text-white text-[8px] font-black uppercase tracking-widest hover:scale-105 transition-all">
+                                            <Plus size={12} /> Add
+                                        </button>
                                     </div>
 
-                                    {/* Text element list */}
                                     <div className="space-y-2">
-                                        {template.textElements.map((el) => (
-                                            <button
-                                                key={el.id}
-                                                onClick={() => setSelectedTextId(el.id)}
-                                                className={`w-full text-left flex items-center justify-between p-3 rounded-xl border-2 transition-all ${selectedTextId === el.id
-                                                    ? 'border-indigo-500 bg-indigo-50'
-                                                    : 'border-gray-200 hover:border-gray-300 bg-white'
-                                                    }`}
+                                        {template.textElements.map(txt => (
+                                            <div 
+                                                role="button" tabIndex={0} 
+                                                key={txt.id} 
+                                                onClick={() => setSelectedTextId(txt.id)}
+                                                className={`w-full p-4 rounded-xl border transition-all text-left group ${
+                                                    selectedTextId === txt.id 
+                                                    ? 'bg-blue-600 border-blue-400' 
+                                                    : 'bg-neutral-900 border-white/5 hover:border-white/20'
+                                                }`}
                                             >
-                                                <div className="truncate">
-                                                    <p className="text-sm font-medium text-gray-900 truncate">{el.text || '(empty)'}</p>
-                                                    <p className="text-[10px] text-gray-500">{el.fontSize}px · {el.fontFamily}</p>
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex flex-col gap-1 overflow-hidden">
+                                                        <span className={`text-[10px] font-black truncate uppercase tracking-tight ${selectedTextId === txt.id ? 'text-white' : 'text-neutral-300'}`}>
+                                                            {txt.text}
+                                                        </span>
+                                                        <span className={`text-[7px] font-black uppercase tracking-widest ${selectedTextId === txt.id ? 'text-blue-100' : 'text-neutral-500'}`}>
+                                                            {txt.fontSize}px · {txt.fontFamily}
+                                                        </span>
+                                                    </div>
+                                                    <button onClick={(e) => { e.stopPropagation(); deleteTextElement(txt.id); }} className="text-neutral-500 hover:text-red-400 p-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                        <Trash2 size={14} />
+                                                    </button>
                                                 </div>
-                                                <span
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        deleteTextElement(el.id);
-                                                    }}
-                                                    className="text-red-400 hover:text-red-600 text-xs cursor-pointer ml-2 shrink-0"
-                                                >
-                                                    ✕
-                                                </span>
-                                            </button>
+                                            </div>
                                         ))}
                                     </div>
 
-                                    {/* Selected text properties */}
                                     {selectedText && (
-                                        <div className="space-y-3 pt-4 border-t border-gray-200">
-                                            <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Properties</h4>
-
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">Content</label>
-                                                <input type="text" value={selectedText.text} onChange={(e) => updateText(selectedText.id, { text: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900" />
+                                        <div className="pt-8 border-t border-white/5 space-y-6">
+                                            <div className="space-y-3">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Content</label>
+                                                <textarea 
+                                                    value={selectedText.text}
+                                                    onChange={(e) => updateText(selectedText.id, { text: e.target.value })}
+                                                    className="w-full bg-neutral-900 border border-white/5 rounded-xl p-4 text-xs font-black text-white focus:outline-none focus:border-blue-500/50 h-20 resize-none"
+                                                />
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div className="space-y-3">
+                                                    <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Size</label>
+                                                    <input type="number" value={selectedText.fontSize} onChange={(e) => updateText(selectedText.id, { fontSize: +e.target.value })} className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-xs font-black text-white" />
+                                                </div>
+                                                <div className="space-y-3">
+                                                    <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Color</label>
+                                                    <div className="flex bg-neutral-900 border border-white/5 rounded-xl p-2 h-[42px]">
+                                                        <input type="color" value={selectedText.color} onChange={(e) => updateText(selectedText.id, { color: e.target.value })} className="w-full h-full cursor-pointer bg-transparent border-0" />
+                                                    </div>
+                                                </div>
                                             </div>
 
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <div>
-                                                    <label className="block text-xs font-semibold text-gray-700 mb-1">Size</label>
-                                                    <input type="number" min={8} max={120} value={selectedText.fontSize} onChange={(e) => updateText(selectedText.id, { fontSize: parseInt(e.target.value) || 16 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900" />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-xs font-semibold text-gray-700 mb-1">Color</label>
-                                                    <input type="color" value={selectedText.color} onChange={(e) => updateText(selectedText.id, { color: e.target.value })} className="w-full h-9 rounded-lg border border-gray-300 cursor-pointer" />
-                                                </div>
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">Font</label>
-                                                <select value={selectedText.fontFamily} onChange={(e) => updateText(selectedText.id, { fontFamily: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white">
-                                                    <option value="sans-serif">Sans-Serif</option>
-                                                    <option value="serif">Serif</option>
+                                            <div className="space-y-3">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Family</label>
+                                                <select value={selectedText.fontFamily} onChange={(e) => updateText(selectedText.id, { fontFamily: e.target.value })} className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-xs font-black text-white appearance-none">
+                                                    <option value="sans-serif">System Sans</option>
+                                                    <option value="serif">System Serif</option>
                                                     <option value="monospace">Monospace</option>
-                                                    <option value="cursive">Cursive</option>
-                                                    <option value="'Outfit', sans-serif">Outfit</option>
+                                                    <option value="cursive">Script</option>
+                                                    <option value="Georgia, serif">Georgia</option>
+                                                    <option value="'Playfair Display', serif">Playfair</option>
                                                 </select>
                                             </div>
 
-                                            {/* Style toggles */}
-                                            <div className="flex gap-2">
-                                                <button
-                                                    onClick={() => updateText(selectedText.id, { fontWeight: selectedText.fontWeight === '700' ? '400' : '700' })}
-                                                    className={`flex-1 py-2 rounded-lg border-2 text-sm font-bold transition-all ${selectedText.fontWeight === '700' ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500'
-                                                        }`}
-                                                >
-                                                    B
-                                                </button>
-                                                <button
-                                                    onClick={() => updateText(selectedText.id, { fontStyle: selectedText.fontStyle === 'italic' ? 'normal' : 'italic' })}
-                                                    className={`flex-1 py-2 rounded-lg border-2 text-sm italic transition-all ${selectedText.fontStyle === 'italic' ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500'
-                                                        }`}
-                                                >
-                                                    I
-                                                </button>
-                                                <button
-                                                    onClick={() => updateText(selectedText.id, {
-                                                        textShadow: selectedText.textShadow === 'none'
-                                                            ? '2px 2px 4px rgba(0,0,0,0.3)'
-                                                            : 'none'
-                                                    })}
-                                                    className={`flex-1 py-2 rounded-lg border-2 text-sm transition-all ${selectedText.textShadow !== 'none' ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500'
-                                                        }`}
-                                                >
-                                                    S
-                                                </button>
+                                            <div className="space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Kerning</label>
+                                                    <span className="text-[9px] font-black text-white">{selectedText.letterSpacing || 0}px</span>
+                                                </div>
+                                                <input type="range" min={0} max={20} value={selectedText.letterSpacing || 0} onChange={(e) => updateText(selectedText.id, { letterSpacing: +e.target.value })} className="w-full accent-blue-500" />
                                             </div>
 
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">Letter Spacing</label>
-                                                <input type="range" min={-2} max={20} value={selectedText.letterSpacing} onChange={(e) => updateText(selectedText.id, { letterSpacing: parseInt(e.target.value) })} className="w-full accent-indigo-600" />
-                                                <span className="text-xs text-gray-500">{selectedText.letterSpacing}px</span>
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">Opacity</label>
-                                                <input type="range" min={10} max={100} value={selectedText.opacity * 100} onChange={(e) => updateText(selectedText.id, { opacity: parseInt(e.target.value) / 100 })} className="w-full accent-indigo-600" />
-                                                <span className="text-xs text-gray-500">{Math.round(selectedText.opacity * 100)}%</span>
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">Rotation</label>
-                                                <input type="range" min={-45} max={45} value={selectedText.rotation} onChange={(e) => updateText(selectedText.id, { rotation: parseInt(e.target.value) })} className="w-full accent-indigo-600" />
-                                                <span className="text-xs text-gray-500">{selectedText.rotation}°</span>
+                                            <div className="space-y-3">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Alignment</label>
+                                                <div className="flex bg-neutral-900 border border-white/5 rounded-xl p-1">
+                                                    {(['left', 'center', 'right'] as const).map(align => (
+                                                        <button 
+                                                            key={align} 
+                                                            onClick={() => updateText(selectedText.id, { textAlign: align })}
+                                                            className={`flex-1 py-2 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${selectedText.textAlign === align ? 'bg-white text-neutral-900' : 'text-neutral-500 hover:text-white'}`}
+                                                        >
+                                                            {align}
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             </div>
                                         </div>
                                     )}
-                                </div>
+                                </section>
                             )}
+
                             {/* ── Stickers ── */}
                             {activeTab === 'stickers' && (
-                                <div className="space-y-6">
-                                    <div>
-                                        <h3 className="font-bold text-gray-900 mb-2">My Stickers</h3>
-                                        <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors">
-                                            <div className="flex flex-col items-center pt-5 pb-6">
-                                                <span className="text-2xl mb-1">📂</span>
-                                                <p className="text-xs text-gray-500">Upload Image</p>
-                                            </div>
-                                            <input type="file" className="hidden" accept="image/*" onChange={handleStickerUpload} />
-                                        </label>
+                                <section className="space-y-8">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Graphical Assets</h3>
+                                        <div className="relative overflow-hidden">
+                                            <input type="file" accept="image/*" onChange={handleStickerUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
+                                            <button className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-600 text-white text-[8px] font-black uppercase tracking-widest hover:scale-105 transition-all">
+                                                <Plus size={12} /> Import
+                                            </button>
+                                        </div>
                                     </div>
 
-                                    {/* Saved Stickers Gallery */}
-                                    {userStickers.length > 0 && (
-                                        <div className="space-y-2">
-                                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Saved Stickers</p>
-                                            <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto p-2 bg-gray-50 rounded-lg">
-                                                {userStickers.map((sticker) => (
-                                                    <button
-                                                        key={sticker.id}
-                                                        onClick={() => addSticker(sticker.image_url)}
-                                                        className="aspect-square border-2 border-gray-200 rounded-lg overflow-hidden hover:border-indigo-500 hover:shadow-lg transition-all bg-white p-1"
-                                                        title="Click to add to template"
-                                                    >
-                                                        <img src={sticker.image_url} className="w-full h-full object-contain" alt="Saved sticker" />
-                                                    </button>
-                                                ))}
-                                            </div>
+                                    {loadingStickers ? (
+                                        <div className="grid grid-cols-3 gap-2">
+                                            {[1, 2, 3].map(i => (
+                                                <div key={i} className="aspect-square bg-neutral-900 rounded-xl animate-pulse border border-white/5" />
+                                            ))}
                                         </div>
-                                    )}
-
-                                    {loadingStickers && (
-                                        <div className="text-center text-sm text-gray-500 py-4">
-                                            Loading your stickers...
+                                    ) : userStickers.length > 0 ? (
+                                        <div className="grid grid-cols-3 gap-2">
+                                            {userStickers.map(stk => (
+                                                <button key={stk.id} onClick={() => addSticker(stk.image_url)} className="aspect-square bg-neutral-900 border border-white/5 rounded-xl p-2 hover:border-blue-500/50 transition-all flex items-center justify-center group overflow-hidden">
+                                                    <Image src={stk.image_url} alt="" width={60} height={60} className="object-contain transition-transform group-hover:scale-110" />
+                                                </button>
+                                            ))}
                                         </div>
-                                    )}
-
-                                    {(template.stickers || []).length > 0 && (
-                                        <div className="space-y-2">
-                                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Layers</p>
-                                            <div className="space-y-2">
-                                                {(template.stickers || []).map((stk, i) => (
-                                                    <div
-                                                        key={stk.id}
-                                                        onClick={() => setSelectedStickerId(stk.id)}
-                                                        className={`flex items-center gap-3 p-2 rounded-lg border-2 cursor-pointer transition-all ${selectedStickerId === stk.id
-                                                            ? 'border-indigo-500 bg-indigo-50'
-                                                            : 'border-transparent hover:bg-gray-100'
-                                                            }`}
-                                                    >
-                                                        <img src={stk.src} className="w-8 h-8 object-contain bg-white rounded border border-gray-200" />
-                                                        <span className="text-sm font-medium flex-1">Sticker {i + 1}</span>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); deleteSticker(stk.id); }}
-                                                            className="p-1 text-gray-400 hover:text-red-500"
-                                                        >
-                                                            ✕
-                                                        </button>
-                                                    </div>
-                                                ))}
-                                            </div>
+                                    ) : (
+                                        <div className="py-10 text-center space-y-2 opacity-20">
+                                            <ImageIcon size={32} className="mx-auto" />
+                                            <p className="text-[8px] font-black uppercase tracking-widest">No Assets Found</p>
                                         </div>
                                     )}
 
                                     {selectedSticker && (
-                                        <div className="p-4 bg-gray-50 rounded-xl space-y-4">
-                                            <div className="flex justify-between items-center pb-2 border-b border-gray-200">
-                                                <span className="text-xs font-bold text-gray-900 uppercase">Selected Sticker</span>
+                                        <div className="pt-8 border-t border-white/5 space-y-6">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[8px] font-black text-white uppercase tracking-widest">Active Asset</span>
+                                                <button onClick={() => deleteSticker(selectedSticker.id)} className="text-red-500 hover:text-red-400 transition-colors">
+                                                    <Trash2 size={16} />
+                                                </button>
                                             </div>
 
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">Size (px)</label>
-                                                <input
-                                                    type="range"
-                                                    min={20}
-                                                    max={300}
-                                                    value={selectedSticker.width}
-                                                    onChange={(e) => updateSticker(selectedSticker.id, { width: Number(e.target.value) })}
-                                                    className="w-full accent-indigo-600"
-                                                />
-                                                <span className="text-xs text-gray-500">{selectedSticker.width}px relative width</span>
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">Rotation</label>
-                                                <input
-                                                    type="range"
-                                                    min={-180}
-                                                    max={180}
-                                                    value={selectedSticker.rotation}
-                                                    onChange={(e) => updateSticker(selectedSticker.id, { rotation: Number(e.target.value) })}
-                                                    className="w-full accent-indigo-600"
-                                                />
-                                                <span className="text-xs text-gray-500">{selectedSticker.rotation}°</span>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* RIGHT: Live Preview */}
-                    <div className="flex-1 bg-gray-100 overflow-auto relative">
-                        <div className="min-h-full flex items-center justify-center p-8">
-                            <div className="text-center">
-                                <div
-                                    ref={previewRef}
-                                    className="relative shadow-2xl transition-all duration-300 inline-block select-none"
-                                    style={{
-                                        width: 420,
-                                        background: backgroundImage
-                                            ? `url(${backgroundImage}) center/cover no-repeat`
-                                            : template.background,
-                                        borderRadius: template.borderRadius,
-                                        padding: template.padding,
-                                        border: template.borderWidth
-                                            ? `${template.borderWidth}px solid ${template.borderColor}`
-                                            : 'none',
-                                    }}
-                                >
-                                    {/* Photo grid */}
-                                    <div
-                                        className="grid"
-                                        style={{
-                                            gridTemplateRows: `repeat(${template.layout.rows}, 1fr)`,
-                                            gridTemplateColumns: `repeat(${template.layout.cols}, 1fr)`,
-                                            gap: template.gap,
-                                        }}
-                                    >
-                                        {template.slots.map((slot, i) => (
-                                            <div
-                                                key={slot.id}
-                                                className="relative overflow-hidden flex items-center justify-center"
-                                                style={{
-                                                    aspectRatio: template.layout.rows > template.layout.cols ? '4/3' : '3/4',
-                                                    background: backgroundImage ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.05)',
-                                                    borderRadius: Math.max(template.borderRadius - template.padding / 2, 4),
-                                                    border: `1px dashed ${template.borderColor}`,
-                                                }}
-                                            >
-                                                <div className="text-center pointer-events-none">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 mx-auto" style={{ color: template.borderColor }}>
-                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
-                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z" />
-                                                    </svg>
-                                                    <span className="text-[10px] font-medium block mt-1" style={{ color: template.borderColor }}>
-                                                        Photo {i + 1}
-                                                    </span>
+                                            {/* Dimensions */}
+                                            <div className="space-y-4">
+                                                <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Dimensions</h4>
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Width</label>
+                                                        <span className="text-[9px] font-black text-white">{selectedSticker.width}px</span>
+                                                    </div>
+                                                    <input type="range" min={20} max={400} value={selectedSticker.width} onChange={(e) => updateSticker(selectedSticker.id, { width: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                </div>
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Height</label>
+                                                        <span className="text-[9px] font-black text-white">{(selectedSticker.height || 0) === 0 ? 'Auto' : `${selectedSticker.height}px`}</span>
+                                                    </div>
+                                                    <input type="range" min={0} max={400} value={selectedSticker.height || 0} onChange={(e) => updateSticker(selectedSticker.id, { height: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                    <p className="text-[7px] text-neutral-600">Set to 0 for auto aspect ratio. Set a value to crop.</p>
                                                 </div>
                                             </div>
-                                        ))}
-                                    </div>
 
-                                    {/* Draggable text elements (absolute positioned) */}
-                                    {template.textElements.map((el) => (
-                                        <div
-                                            key={el.id}
-                                            onMouseDown={(e) => startDrag(e, el.id, el.x, el.y)}
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setSelectedTextId(el.id);
-                                                setActiveTab('text');
-                                            }}
-                                            className={`absolute cursor-move whitespace-nowrap ${selectedTextId === el.id ? 'ring-2 ring-indigo-500 ring-offset-1' : ''
-                                                }`}
-                                            style={{
-                                                left: `${el.x}%`,
-                                                top: `${el.y}%`,
-                                                transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                                fontSize: el.fontSize,
-                                                fontFamily: el.fontFamily,
-                                                color: el.color,
-                                                fontWeight: el.fontWeight,
-                                                fontStyle: el.fontStyle,
-                                                textAlign: el.textAlign as any,
-                                                letterSpacing: el.letterSpacing,
-                                                textShadow: el.textShadow,
-                                                opacity: el.opacity,
-                                                lineHeight: 1.2,
-                                                padding: '2px 6px',
-                                                borderRadius: 4,
-                                                userSelect: 'none',
-                                            }}
-                                        >
-                                            {el.text}
-                                        </div>
-                                    ))}
+                                            {/* Crop Pan (only when height is set) */}
+                                            {(selectedSticker.height || 0) > 0 && (
+                                                <div className="space-y-4">
+                                                    <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Crop Position</h4>
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Pan X</label>
+                                                            <span className="text-[9px] font-black text-white">{selectedSticker.cropX || 0}%</span>
+                                                        </div>
+                                                        <input type="range" min={-50} max={50} value={selectedSticker.cropX || 0} onChange={(e) => updateSticker(selectedSticker.id, { cropX: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                    </div>
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Pan Y</label>
+                                                            <span className="text-[9px] font-black text-white">{selectedSticker.cropY || 0}%</span>
+                                                        </div>
+                                                        <input type="range" min={-50} max={50} value={selectedSticker.cropY || 0} onChange={(e) => updateSticker(selectedSticker.id, { cropY: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                    </div>
+                                                </div>
+                                            )}
 
-                                    {/* Draggable stickers */}
-                                    {(template.stickers || []).map((stk) => (
-                                        <div
-                                            key={stk.id}
-                                            onMouseDown={(e) => startDrag(e, stk.id, stk.x, stk.y)}
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setSelectedStickerId(stk.id);
-                                                setActiveTab('stickers');
-                                            }}
-                                            className={`absolute cursor-move select-none ${selectedStickerId === stk.id ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-transparent' : ''}`}
-                                            style={{
-                                                left: `${stk.x}%`,
-                                                top: `${stk.y}%`,
-                                                width: stk.width,
-                                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
-                                                zIndex: 20,
-                                            }}
-                                        >
-                                            <img
-                                                src={stk.src}
-                                                alt="sticker"
-                                                className="w-full h-auto drop-shadow-md pointer-events-none"
-                                            />
-                                        </div>
-                                    ))}
-
-                                    {/* Watermark */}
-                                    {template.watermarkText && (
-                                        <div
-                                            className="absolute bottom-2 left-0 right-0 text-center pointer-events-none"
-                                            style={{
-                                                fontSize: 10,
-                                                opacity: 0.3,
-                                                letterSpacing: 2,
-                                                textTransform: 'uppercase',
-                                                color: template.background.includes('linear') || template.background.startsWith('#1') || template.background.startsWith('#0')
-                                                    ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.4)',
-                                            }}
-                                        >
-                                            {template.watermarkText}
+                                            {/* Transform */}
+                                            <div className="space-y-4">
+                                                <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Transform</h4>
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Rotation</label>
+                                                        <span className="text-[9px] font-black text-white">{selectedSticker.rotation}deg</span>
+                                                    </div>
+                                                    <input type="range" min={-180} max={180} value={selectedSticker.rotation} onChange={(e) => updateSticker(selectedSticker.id, { rotation: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                </div>
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Opacity</label>
+                                                        <span className="text-[9px] font-black text-white">{Math.round((selectedSticker.opacity ?? 1) * 100)}%</span>
+                                                    </div>
+                                                    <input type="range" min={10} max={100} value={Math.round((selectedSticker.opacity ?? 1) * 100)} onChange={(e) => updateSticker(selectedSticker.id, { opacity: +e.target.value / 100 })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => { updateSticker(selectedSticker.id, { flipX: !(selectedSticker.flipX ?? false) }); pushToHistory(template); }}
+                                                        className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border text-[8px] font-black uppercase tracking-widest transition-all ${
+                                                            selectedSticker.flipX ? 'bg-blue-600 border-blue-400 text-white' : 'bg-neutral-900 border-white/5 text-neutral-400 hover:border-white/20'
+                                                        }`}
+                                                    >
+                                                        <FlipHorizontal size={12} /> Flip X
+                                                    </button>
+                                                    <button
+                                                        onClick={() => { updateSticker(selectedSticker.id, { flipY: !(selectedSticker.flipY ?? false) }); pushToHistory(template); }}
+                                                        className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border text-[8px] font-black uppercase tracking-widest transition-all ${
+                                                            selectedSticker.flipY ? 'bg-blue-600 border-blue-400 text-white' : 'bg-neutral-900 border-white/5 text-neutral-400 hover:border-white/20'
+                                                        }`}
+                                                    >
+                                                        <FlipHorizontal size={12} className="rotate-90" /> Flip Y
+                                                    </button>
+                                                </div>
+                                            </div>
                                         </div>
                                     )}
-                                </div>
+                                </section>
+                            )}
+                        </div>
+                    </aside>
 
-                                {/* Info */}
-                                <p className="text-sm text-gray-500 mt-4">
-                                    <span className="font-semibold text-gray-900">{template.name}</span>
-                                    {' · '}{template.layout.rows}×{template.layout.cols} grid · {template.slots.length} photo{template.slots.length !== 1 ? 's' : ''}
-                                    {' · '}{template.textElements.length} text element{template.textElements.length !== 1 ? 's' : ''}
-                                </p>
-                                <p className="text-xs text-gray-400 mt-1">Click text to select · Drag to reposition</p>
+                    {/* MAIN: Preview Canvas */}
+                    <main className="flex-1 bg-[#fafafa] p-10 flex flex-col items-center justify-center relative overflow-hidden"
+                        style={{ 
+                            backgroundImage: 'radial-gradient(circle, #e2e8f0 1px, transparent 1px)', 
+                            backgroundSize: '30px 30px' 
+                        }}
+                    >
+                        {/* Zoom/Pan info */}
+                        <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-neutral-900 border border-white/5 px-6 py-2 rounded-full">
+                            <span className="text-[9px] font-black text-neutral-500 uppercase tracking-widest">Matrix Preview</span>
+                            <div className="h-3 w-px bg-white/10" />
+                            <span className="text-[9px] font-black text-white uppercase tracking-widest">{template.layout.rows}x{template.layout.cols} Active Grid</span>
+                        </div>
+
+                        {/* Template Container */}
+                        <div 
+                            ref={previewRef}
+                            className="relative shadow-2xl transition-all duration-300"
+                            style={{ 
+                                width: template.width, 
+                                height: template.height, 
+                                maxWidth: '100%',
+                                maxHeight: '80vh',
+                                background: template.background,
+                                backgroundImage: backgroundImage ? `url(${backgroundImage})` : template.backgroundImage ? `url(${template.backgroundImage})` : 'none',
+                                backgroundSize: 'cover',
+                                backgroundPosition: 'center',
+                                padding: template.padding,
+                                border: `${template.borderWidth}px solid ${template.borderColor}`,
+                                borderRadius: template.borderRadius,
+                                overflow: 'hidden'
+                            }}
+                            onClick={() => { setSelectedTextId(null); setSelectedStickerId(null); setSelectedSlotId(null); }}
+                        >
+                            {/* Photo Slots (Freeform Layers) */}
+                            {template.slots.map((slot) => (
+                                <div key={slot.id} 
+                                    className={`absolute cursor-grab active:cursor-grabbing flex items-center justify-center group border-2 transition-shadow ${selectedSlotId === slot.id ? 'z-50 border-blue-500 shadow-lg shadow-blue-500/20' : 'z-10 border-white/10 hover:border-white/30'}`}
+                                    style={{ 
+                                        left: `${slot.x}%`,
+                                        top: `${slot.y}%`,
+                                        width: `${slot.width}%`,
+                                        height: `${slot.height}%`,
+                                        transform: `rotate(${slot.rotation || 0}deg)`,
+                                        backgroundColor: 'rgba(0,0,0,0.4)',
+                                        borderRadius: Math.min(template.borderRadius / 2, 12),
+                                    }}
+                                    onMouseDown={(e) => {
+                                        setSelectedSlotId(slot.id);
+                                        setSelectedTextId(null);
+                                        setSelectedStickerId(null);
+                                        setActiveTab('layout'); // Auto-switch tab
+                                        startDrag(e, slot.id, slot.x, slot.y);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onContextMenu={(e) => openContextMenu(e, slot.id, 'slot')}
+                                >
+                                    <div className="flex flex-col items-center gap-2">
+                                        <ImageIcon size={24} className="text-white/20 group-hover:text-white/40 transition-colors" />
+                                        <span className="text-[7px] font-black text-white/20 uppercase tracking-[0.2em]">{slot.id}</span>
+                                    </div>
+                                    
+                                    {selectedSlotId === slot.id && (
+                                        <>
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); deleteSlot(slot.id); }}
+                                                className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-lg z-[100]"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                            
+                                            {/* Resize Handles */}
+                                            {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
+                                                <div 
+                                                    key={type}
+                                                    className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[110] cursor-${type}-resize hover:scale-125 transition-transform`}
+                                                    style={{
+                                                        top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
+                                                        left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
+                                                        transform: 'translate(-0%, -0%)',
+                                                        marginTop: type === 'e' || type === 'w' ? -6 : 0,
+                                                        marginLeft: type === 'n' || type === 's' ? -6 : 0,
+                                                    }}
+                                                    onMouseDown={(e) => startResize(e, slot.id, type, slot.x, slot.y, slot.width, slot.height)}
+                                                />
+                                            ))}
+                                        </>
+                                    )}
+                                </div>
+                            ))}
+
+                            {/* Floating Layers Container (Overlay) */}
+                            <div className="absolute inset-0 pointer-events-none">
+                                {/* Stickers */}
+                                {(template.stickers || []).map((stk) => (
+                                    <div
+                                        key={stk.id}
+                                        className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing group ${selectedStickerId === stk.id ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent' : ''}`}
+                                        style={{
+                                            left: `${stk.x}%`,
+                                            top: `${stk.y}%`,
+                                            width: stk.width,
+                                            height: (stk.height || 0) > 0 ? stk.height : 'auto',
+                                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg) scaleX(${stk.flipX ? -1 : 1}) scaleY(${stk.flipY ? -1 : 1})`,
+                                            zIndex: selectedStickerId === stk.id ? 100 : 50,
+                                            opacity: stk.opacity ?? 1,
+                                            overflow: (stk.height || 0) > 0 ? 'hidden' : 'visible',
+                                        }}
+                                        onMouseDown={(e) => { 
+                                            e.stopPropagation(); 
+                                            setSelectedStickerId(stk.id); 
+                                            setSelectedTextId(null); 
+                                            setSelectedSlotId(null);
+                                            setActiveTab('stickers');
+                                            startDrag(e, stk.id, stk.x, stk.y); 
+                                        }}
+                                        onContextMenu={(e) => openContextMenu(e, stk.id, 'sticker')}
+                                    >
+                                        <Image 
+                                            src={stk.src} alt="" width={stk.width} height={(stk.height || 0) > 0 ? stk.height : stk.width} 
+                                            className={`w-full ${(stk.height || 0) > 0 ? 'h-full object-cover' : 'h-full object-contain'}`}
+                                            style={(stk.height || 0) > 0 ? { objectPosition: `${50 + (stk.cropX || 0)}% ${50 + (stk.cropY || 0)}%` } : undefined}
+                                            unoptimized 
+                                        />
+                                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-neutral-900 px-2 py-1 rounded text-[7px] font-black text-white uppercase tracking-tighter">Layer: Asset</div>
+                                        
+                                        {selectedStickerId === stk.id && (
+                                            <>
+                                                {/* Resize Handles */}
+                                                {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
+                                                    <div 
+                                                        key={type}
+                                                        className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[120] cursor-${type}-resize shadow-lg hover:scale-125 transition-transform`}
+                                                        style={{
+                                                            top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
+                                                            left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
+                                                            transform: 'translate(-0%, -0%)',
+                                                            marginTop: type === 'e' || type === 'w' ? -6 : 0,
+                                                            marginLeft: type === 'n' || type === 's' ? -6 : 0,
+                                                        }}
+                                                        onMouseDown={(e) => startResize(e, stk.id, type, stk.x, stk.y, stk.width / (template.width / 100), 0)}
+                                                    />
+                                                ))}
+                                            </>
+                                        )}
+                                    </div>
+                                ))}
+
+                                {/* Text Elements */}
+                                {template.textElements.map((txt) => (
+                                    <div
+                                        key={txt.id}
+                                        className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing px-2 py-1 group ${selectedTextId === txt.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''}`}
+                                        style={{
+                                            left: `${txt.x}%`,
+                                            top: `${txt.y}%`,
+                                            transform: `translate(-50%, -50%) rotate(${txt.rotation}deg)`,
+                                            fontSize: txt.fontSize,
+                                            fontFamily: txt.fontFamily,
+                                            color: txt.color,
+                                            fontWeight: txt.fontWeight,
+                                            fontStyle: txt.fontStyle,
+                                            textAlign: txt.textAlign as any,
+                                            letterSpacing: `${txt.letterSpacing}px`,
+                                            textShadow: txt.textShadow,
+                                            opacity: txt.opacity,
+                                            zIndex: selectedTextId === txt.id ? 100 : 50,
+                                        }}
+                                        onMouseDown={(e) => { 
+                                            e.stopPropagation(); 
+                                            setSelectedTextId(txt.id); 
+                                            setSelectedStickerId(null); 
+                                            setSelectedSlotId(null);
+                                            setActiveTab('text');
+                                            startDrag(e, txt.id, txt.x, txt.y); 
+                                        }}
+                                        onContextMenu={(e) => openContextMenu(e, txt.id, 'text')}
+                                    >
+                                        {txt.text}
+                                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-neutral-900 px-2 py-1 rounded text-[7px] font-black text-white uppercase tracking-tighter">Layer: Type</div>
+
+                                        {selectedTextId === txt.id && (
+                                            <>
+                                                {/* Resize Handles */}
+                                                {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
+                                                    <div 
+                                                        key={type}
+                                                        className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[120] cursor-${type}-resize shadow-lg hover:scale-125 transition-transform`}
+                                                        style={{
+                                                            top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
+                                                            left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
+                                                            transform: 'translate(-0%, -0%)',
+                                                            marginTop: type === 'e' || type === 'w' ? -6 : 0,
+                                                            marginLeft: type === 'n' || type === 's' ? -6 : 0,
+                                                        }}
+                                                        onMouseDown={(e) => startResize(e, txt.id, type, txt.x, txt.y, txt.fontSize * 4 / (template.width / 100), 0)}
+                                                    />
+                                                ))}
+                                            </>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
                         </div>
-                    </div>
+
+                        {/* Shortcuts */}
+                        <div className="absolute bottom-10 right-10 flex flex-col items-end gap-2">
+                            <div className="flex items-center gap-2 text-[8px] font-black text-neutral-500 uppercase tracking-[0.2em]">
+                                <Move size={10} /> Drag layers to position
+                            </div>
+                            <div className="flex items-center gap-2 text-[8px] font-black text-neutral-500 uppercase tracking-[0.2em]">
+                                <RotateCw size={10} /> Rotate in properties
+                            </div>
+                            <div className="flex items-center gap-2 text-[8px] font-black text-neutral-500 uppercase tracking-[0.2em]">
+                                <Layers size={10} /> Right-click for options
+                            </div>
+                        </div>
+
+                        {/* Context Menu Overlay */}
+                        {contextMenu && (
+                            <div
+                                className="fixed z-[9999] min-w-[200px] py-2 bg-neutral-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl shadow-black/50"
+                                style={{ left: contextMenu.x, top: contextMenu.y }}
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                {/* Header */}
+                                <div className="px-4 py-2 border-b border-white/5">
+                                    <span className="text-[8px] font-black text-neutral-400 uppercase tracking-[0.25em]">
+                                        {contextMenu.elementType === 'slot' ? 'Photo Slot' : contextMenu.elementType === 'text' ? 'Text Layer' : 'Sticker Asset'}
+                                        {' '} -- {contextMenu.elementId}
+                                    </span>
+                                </div>
+
+                                {/* Actions Group 1: Transform */}
+                                <div className="py-1">
+                                    <button
+                                        onClick={() => duplicateElement(contextMenu.elementId, contextMenu.elementType)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/5 transition-colors group"
+                                    >
+                                        <Copy size={14} className="text-neutral-400 group-hover:text-blue-400" />
+                                        <span className="text-[10px] font-bold text-neutral-300 group-hover:text-white">Duplicate</span>
+                                        <span className="ml-auto text-[8px] font-bold text-neutral-600">Ctrl+D</span>
+                                    </button>
+                                    <button
+                                        onClick={() => resetElementPosition(contextMenu.elementId, contextMenu.elementType)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/5 transition-colors group"
+                                    >
+                                        <AlignCenter size={14} className="text-neutral-400 group-hover:text-blue-400" />
+                                        <span className="text-[10px] font-bold text-neutral-300 group-hover:text-white">Reset Position</span>
+                                    </button>
+                                    <button
+                                        onClick={() => resetElementRotation(contextMenu.elementId, contextMenu.elementType)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/5 transition-colors group"
+                                    >
+                                        <RotateCcw size={14} className="text-neutral-400 group-hover:text-blue-400" />
+                                        <span className="text-[10px] font-bold text-neutral-300 group-hover:text-white">Reset Rotation</span>
+                                    </button>
+                                </div>
+
+                                {/* Divider */}
+                                <div className="h-px bg-white/5 mx-3" />
+
+                                {/* Actions Group 2: Layer Order */}
+                                <div className="py-1">
+                                    <button
+                                        onClick={() => bringToFront(contextMenu.elementId, contextMenu.elementType)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/5 transition-colors group"
+                                    >
+                                        <ArrowUp size={14} className="text-neutral-400 group-hover:text-emerald-400" />
+                                        <span className="text-[10px] font-bold text-neutral-300 group-hover:text-white">Bring to Front</span>
+                                    </button>
+                                    <button
+                                        onClick={() => sendToBack(contextMenu.elementId, contextMenu.elementType)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/5 transition-colors group"
+                                    >
+                                        <ArrowDown size={14} className="text-neutral-400 group-hover:text-emerald-400" />
+                                        <span className="text-[10px] font-bold text-neutral-300 group-hover:text-white">Send to Back</span>
+                                    </button>
+                                </div>
+
+                                {/* Divider */}
+                                <div className="h-px bg-white/5 mx-3" />
+
+                                {/* Actions Group 3: Destructive */}
+                                <div className="py-1">
+                                    <button
+                                        onClick={() => deleteFromContextMenu(contextMenu.elementId, contextMenu.elementType)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-red-500/10 transition-colors group"
+                                    >
+                                        <Trash2 size={14} className="text-red-400 group-hover:text-red-300" />
+                                        <span className="text-[10px] font-bold text-red-400 group-hover:text-red-300">Delete</span>
+                                        <span className="ml-auto text-[8px] font-bold text-neutral-600">Del</span>
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </main>
                 </div>
-            </div>
-        </div>
+            </motion.div>
+        </AnimatePresence>
     );
 }

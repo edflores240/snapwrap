@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { motion } from 'framer-motion';
+import { Calendar, ArrowUpRight, Trash2, Clock } from 'lucide-react';
 
 interface Event {
     id: string;
@@ -13,6 +14,7 @@ interface Event {
     slug: string;
     date: string;
     is_active: boolean;
+    config: any;
     created_at: string;
 }
 
@@ -93,48 +95,83 @@ export default function EventsPage() {
                             initial={{ opacity: 0, y: 20 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: index * 0.1 }}
+                            style={{ rotate: index % 2 === 0 ? '-0.5deg' : '0.5deg' }}
+                            className="group"
                         >
-                            <Card className="group hover:shadow-lg hover:border-indigo-200 transition-all duration-300 relative overflow-hidden">
-                                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary-start to-primary-end opacity-0 group-hover:opacity-100 transition-opacity" />
+                            <Link href={`/admin/events/${event.id}`} className="block relative">
+                                {/* Folder Back Layer (The Tab) */}
+                                <div className="absolute inset-0 bg-neutral-100 border border-neutral-200 rounded-2xl transform translate-y-[-12px] transition-transform group-hover:translate-y-[-16px] duration-300 z-0" 
+                                     style={{ 
+                                         clipPath: 'polygon(0% 20%, 40% 20%, 48% 0%, 100% 0%, 100% 100%, 0% 100%)',
+                                         backgroundColor: event.config?.boothSettings?.themeColor ? `${event.config.boothSettings.themeColor}10` : '#f5f5f5',
+                                         borderColor: event.config?.boothSettings?.themeColor || '#e5e5e5'
+                                     }} />
+                                
+                                {/* Folder Front Layer (The Main Card) */}
+                                <div className="relative min-h-[280px] bg-white border border-neutral-300 rounded-2xl shadow-sm transition-all duration-300 group-hover:shadow-xl group-hover:translate-y-[-2px] flex flex-col z-10">
+                                    {/* Paper Texture Overlay */}
+                                    <div className="absolute inset-0 opacity-[0.04] pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/paper-fibers.png')] rounded-2xl" />
 
-                                <div className="p-6">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className={`px-3 py-1 rounded-full text-xs font-medium ${event.is_active
-                                                ? 'bg-green-100 text-green-700 border border-green-200'
-                                                : 'bg-gray-100 text-gray-600 border border-gray-200'
-                                            }`}>
-                                            {event.is_active ? 'Active' : 'Archived'}
+                                    <div className="p-10 flex flex-col h-full relative z-10 flex-1">
+                                        <div className="flex flex-wrap justify-between items-start gap-4 mb-8">
+                                            <div 
+                                                className="px-2 py-1 rounded-sm text-[8px] font-black uppercase tracking-[0.2em]"
+                                                style={{ 
+                                                    backgroundColor: event.is_active ? (event.config?.boothSettings?.themeColor || '#171717') : '#f5f5f5',
+                                                    color: event.is_active ? '#fff' : '#a3a3a3'
+                                                }}
+                                            >
+                                                {event.is_active ? 'Active' : 'Archived'}
+                                            </div>
+                                            <div className="text-[10px] text-neutral-400 font-bold uppercase tracking-widest flex items-center gap-1">
+                                                <Calendar size={10} />
+                                                {new Date(event.date).toLocaleDateString(undefined, { 
+                                                    month: 'short', 
+                                                    day: 'numeric', 
+                                                    year: 'numeric' 
+                                                })}
+                                            </div>
                                         </div>
-                                        <div className="text-xs text-gray-500 font-medium">
-                                            {new Date(event.date).toLocaleDateString()}
+
+                                        <div className="mb-auto space-y-6">
+                                            <div>
+                                                <h3 className="text-2xl font-bold text-neutral-900 leading-tight">
+                                                    {event.name}
+                                                </h3>
+                                            </div>
+                                            
+                                            <div className="flex flex-wrap gap-2">
+                                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neutral-50 border border-neutral-100">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-neutral-900" />
+                                                    <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+                                                        {event.slug || 'no-slug'}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </div>
-                                    </div>
 
-                                    <h3 className="text-xl font-bold text-gray-900 mb-1 truncate" title={event.name}>
-                                        {event.name}
-                                    </h3>
-                                    <p className="text-sm text-indigo-600 mb-6 truncate font-mono">
-                                        /{event.slug || 'no-slug'}
-                                    </p>
-
-                                    <div className="flex gap-2 mt-auto">
-                                        <Link href={`/admin/events/${event.id}`} className="flex-1">
-                                            <Button variant="secondary" className="w-full">
-                                                Manage
-                                            </Button>
-                                        </Link>
-                                        <Button
-                                            variant="ghost"
-                                            className="px-3 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                            onClick={() => handleDelete(event.id)}
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                                                <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                                            </svg>
-                                        </Button>
+                                        <div className="mt-12 pt-8 border-t border-dashed border-neutral-200 flex items-center justify-between">
+                                            <div className="flex flex-col gap-1">
+                                                <span className="text-[9px] font-black text-neutral-300 uppercase tracking-widest">
+                                                    Serial Number
+                                                </span>
+                                                <span className="text-[10px] font-bold text-neutral-900 uppercase tracking-widest">
+                                                    SR-{event.id.slice(0, 8)}
+                                                </span>
+                                            </div>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    handleDelete(event.id);
+                                                }}
+                                                className="text-neutral-300 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-lg"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
-                            </Card>
+                            </Link>
                         </motion.div>
                     ))}
                 </div>

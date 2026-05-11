@@ -8,12 +8,17 @@ export default function NewTemplatePage() {
     const router = useRouter();
 
     const handleSave = (config: TemplateConfig) => {
-        console.log('Template Configuration:', config);
-        // For now, since this is a standalone creaetor, we'll just alert the JSON
-        // In a real app, this might save to a global library
-        const json = JSON.stringify(config, null, 2);
-        navigator.clipboard.writeText(json);
-        alert('Template configuration copied to clipboard! (Check console for full JSON)');
+        try {
+            const existingStr = localStorage.getItem('snapwrap_custom_templates');
+            const existing = existingStr ? JSON.parse(existingStr) : [];
+            const updated = existing.filter((t: TemplateConfig) => t.id !== config.id);
+            updated.unshift(config);
+            localStorage.setItem('snapwrap_custom_templates', JSON.stringify(updated));
+            alert('Template saved successfully! It will now be available when you launch the booth.');
+        } catch (e) {
+            console.error('Error saving template:', e);
+            alert('Failed to save template.');
+        }
     };
 
     const handleClose = () => {

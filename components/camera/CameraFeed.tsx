@@ -2,6 +2,7 @@
 
 import React, { useRef, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { FlipHorizontal, Video } from 'lucide-react';
 
 interface CameraFeedProps {
     onCapture: (imageDataUrl: string) => void;
@@ -18,6 +19,7 @@ export function CameraFeed({ onCapture, isActive }: CameraFeedProps) {
     // Camera Selection State
     const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
     const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+    const [isMirrored, setIsMirrored] = useState(true);
 
     // 1. List Cameras
     useEffect(() => {
@@ -106,6 +108,13 @@ export function CameraFeed({ onCapture, isActive }: CameraFeedProps) {
 
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
+
+        // If mirrored, flip the context before drawing
+        if (isMirrored) {
+            context.translate(canvas.width, 0);
+            context.scale(-1, 1);
+        }
+
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         onCapture(canvas.toDataURL('image/png'));
     };
@@ -149,7 +158,7 @@ export function CameraFeed({ onCapture, isActive }: CameraFeedProps) {
                     autoPlay
                     playsInline
                     muted
-                    className="w-full h-auto block transform scale-x-[-1]" // Mirror effect usually preferred
+                    className={`w-full h-auto block transition-transform duration-300 ${isMirrored ? 'scale-x-[-1]' : ''}`}
                 />
 
                 {/* Countdown Overlay */}
@@ -176,6 +185,23 @@ export function CameraFeed({ onCapture, isActive }: CameraFeedProps) {
                                 </option>
                             ))}
                         </select>
+                    </div>
+                )}
+
+                {/* Mirror Toggle Button */}
+                {!countdown && (
+                    <div className="absolute top-4 left-4 z-10">
+                        <button
+                            onClick={() => setIsMirrored(!isMirrored)}
+                            className="bg-black/50 backdrop-blur-md border border-white/20 rounded-full p-3 text-white hover:bg-black/70 transition-all flex items-center justify-center group"
+                            title={isMirrored ? "Disable Mirror" : "Enable Mirror"}
+                        >
+                            {isMirrored ? (
+                                <FlipHorizontal size={20} className="group-hover:scale-110 transition-transform" />
+                            ) : (
+                                <Video size={20} className="group-hover:scale-110 transition-transform" />
+                            )}
+                        </button>
                     </div>
                 )}
             </div>

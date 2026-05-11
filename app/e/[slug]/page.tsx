@@ -7,6 +7,10 @@ import { TemplateConfig, PRESET_TEMPLATES } from '@/components/templates/Templat
 import TemplatePreview from '@/components/templates/TemplatePreview';
 import QRCode from 'react-qr-code';
 import { GestureDetector, GestureMode } from '@/components/camera/GestureDetector';
+import { 
+    FlipHorizontal, Video, ZoomIn, ZoomOut, 
+    RotateCcw, RotateCw, Plus, X, ArrowUp, ArrowDown, Trash2 
+} from 'lucide-react';
 
 interface Event {
     id: string;
@@ -105,6 +109,15 @@ export default function PublicBoothPage() {
     // Camera Selection State
     const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
     const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+    const [isMirrored, setIsMirrored] = useState(true);
+    const [zoom, setZoom] = useState(1);
+
+    // Movable Photos State (for Review step)
+    const [photoTransforms, setPhotoTransforms] = useState<any[]>([]);
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragTarget, setDragTarget] = useState<number | null>(null);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0, photoX: 0, photoY: 0 });
+    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, index: number } | null>(null);
 
     // Load Devices
     useEffect(() => {
@@ -307,18 +320,37 @@ export default function PublicBoothPage() {
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+        if (isMirrored) {
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+        }
+
+        // Apply Zoom to source crop
+        const zWidth = sWidth / zoom;
+        const zHeight = sHeight / zoom;
+        const zx = sx + (sWidth - zWidth) / 2;
+        const zy = sy + (sHeight - zHeight) / 2;
+
+        ctx.drawImage(video, zx, zy, zWidth, zHeight, 0, 0, canvas.width, canvas.height);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         return canvas.toDataURL('image/jpeg', 0.95);
-    }, [selectedTemplate]);
+    }, [selectedTemplate, isMirrored, zoom]);
 
     // ── Step Handlers ──────────────────────────────────────────────────
 
     const handleSelectTemplate = async (tpl: TemplateConfig) => {
         setSelectedTemplate(tpl);
-        setCapturedPhotos([]);
+        setCapturedPhotos(new Array(tpl.slots.length).fill(null));
+        setPhotoTransforms(tpl.slots.map((slot, i) => ({
+            id: i,
+            x: slot.x,
+            y: slot.y,
+            width: slot.width,
+            height: slot.height,
+            rotation: slot.rotation || 0,
+            scale: 1,
+            zIndex: i + 10
+        })));
         setCurrentSlotIndex(0);
         setCaptureSubState('live');
         setStep('mirror');
@@ -529,193 +561,148 @@ export default function PublicBoothPage() {
         if (!selectedTemplate) { return null; }
 
         const compositeCanvas = document.createElement('canvas');
-        const SCALE = 3;
-        const W = 420 * SCALE;
-        const PAD = selectedTemplate.padding * SCALE;
-        const GAP = selectedTemplate.gap * SCALE;
-        const BORDER_R = selectedTemplate.borderRadius * SCALE;
-
-        const cols = selectedTemplate.layout.cols;
-        const rows = selectedTemplate.layout.rows;
-        const gridW = W - PAD * 2;
-        const slotW = (gridW - GAP * (cols - 1)) / cols;
-        const aspectRatio = rows > cols ? 3 / 2 : 16 / 9; // 3:2 portrait, 16:9 landscape for groups
-        const slotH = slotW / aspectRatio;
-        const gridH = slotH * rows + GAP * (rows - 1);
-        const H = gridH + PAD * 2 + 60 * SCALE;
+        const SCALE = 4; // High resolution output
+        const W = selectedTemplate.width * SCALE;
+        const H = selectedTemplate.height * SCALE;
 
         compositeCanvas.width = W;
         compositeCanvas.height = H;
         const ctx = compositeCanvas.getContext('2d');
         if (!ctx) { return null; }
 
-        // Rounded rect clip for entire canvas
-        ctx.beginPath();
-        ctx.roundRect(0, 0, W, H, BORDER_R);
-        ctx.clip();
-
-        // Background
-        const bg = selectedTemplate.background;
-        if (bg.startsWith('linear-gradient')) {
-            // Parse gradient
-            const gradientMatch = bg.match(/linear-gradient\(([^,]+),\s*(.+)\)/);
-            if (gradientMatch) {
-                const colors = gradientMatch[2].split(/,\s*(?=#|rgba?|[a-z])/).map(c => {
-                    const parts = c.trim().split(/\s+/);
-                    return { color: parts[0], stop: parseInt(parts[1]) / 100 || 0 };
-                });
-                const grad = ctx.createLinearGradient(0, 0, W * 0.5, H);
-                colors.forEach(c => grad.addColorStop(c.stop, c.color));
-                ctx.fillStyle = grad;
-            } else {
-                ctx.fillStyle = '#ffffff';
-            }
-        } else {
-            ctx.fillStyle = bg || '#ffffff';
-        }
-        ctx.fillRect(0, 0, W, H);
-
-        // Background Image (if set, draw on top of the solid/gradient fill)
-        const drawBgImage = (): Promise<void> => {
-            return new Promise((res) => {
-                if (selectedTemplate.backgroundImage) {
-                    const bgImg = new Image();
-                    bgImg.crossOrigin = 'anonymous';
-                    bgImg.onload = () => {
-                        // Cover fill: scale to fill entire canvas
-                        const imgAspect = bgImg.width / bgImg.height;
-                        const canvasAspect = W / H;
-                        let sx = 0, sy = 0, sw = bgImg.width, sh = bgImg.height;
-                        if (imgAspect > canvasAspect) {
-                            sw = bgImg.height * canvasAspect;
-                            sx = (bgImg.width - sw) / 2;
-                        } else {
-                            sh = bgImg.width / canvasAspect;
-                            sy = (bgImg.height - sh) / 2;
-                        }
-                        ctx.drawImage(bgImg, sx, sy, sw, sh, 0, 0, W, H);
-                        res();
-                    };
-                    bgImg.onerror = () => res(); // Fallback: just keep the solid/gradient bg
-                    bgImg.src = selectedTemplate.backgroundImage;
-                } else {
-                    res();
-                }
+        // Helper to load an image
+        const loadImage = (src: string): Promise<HTMLImageElement> => {
+            return new Promise((res, rej) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => res(img);
+                img.onerror = rej;
+                img.src = src;
             });
         };
 
-        await drawBgImage();
+        try {
+            // 1. Draw Template Background (Snapshot Protocol)
+            if (selectedTemplate.backgroundSnapshot) {
+                const bg = await loadImage(selectedTemplate.backgroundSnapshot);
+                ctx.drawImage(bg, 0, 0, W, H);
+            } else {
+                ctx.fillStyle = selectedTemplate.background || '#ffffff';
+                ctx.fillRect(0, 0, W, H);
+            }
 
-        // Border
-        if (selectedTemplate.borderWidth) {
-            ctx.strokeStyle = selectedTemplate.borderColor;
-            ctx.lineWidth = selectedTemplate.borderWidth * SCALE;
-            ctx.beginPath();
-            ctx.roundRect(0, 0, W, H, BORDER_R);
-            ctx.stroke();
-        }
+            // 2. Draw Photo Slots (Movable)
+            const sortedIndices = photoTransforms.map((_, i) => i).sort((a, b) => (photoTransforms[a].zIndex || 0) - (photoTransforms[b].zIndex || 0));
 
-        // Draw photos
-        const drawPromises = capturedPhotos.map((photoSrc, i) => {
-            return new Promise<void>((res) => {
-                const img = new Image();
-                img.onload = () => {
-                    const row = Math.floor(i / cols);
-                    const col = i % cols;
-                    const x = PAD + col * (slotW + GAP);
-                    const y = PAD + 30 * SCALE + row * (slotH + GAP);
-                    const r = Math.max(BORDER_R - PAD / 2, 4);
+            for (const i of sortedIndices) {
+                const transform = photoTransforms[i];
+                const slot = selectedTemplate.slots[i]; // Original slot for aspect ratio
+                const photoSrc = capturedPhotos[i];
+                if (!photoSrc) continue;
 
+                const img = await loadImage(photoSrc);
+                const sw = (transform.width / 100) * W * (transform.scale || 1);
+                const sh = (transform.height / 100) * H * (transform.scale || 1);
+                const sx = (transform.x / 100) * W;
+                const sy = (transform.y / 100) * H;
+
+                ctx.save();
+                ctx.translate(sx + sw / 2, sy + sh / 2);
+                ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
+                
+                // Clip slot area
+                const radius = (selectedTemplate.borderRadius / 4) * SCALE;
+                ctx.beginPath();
+                ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
+                ctx.clip();
+
+                const imgAspect = img.width / img.height;
+                const slotAspect = sw / sh;
+                let drawSW = img.width, drawSH = img.height;
+                let drawSX = 0, drawSY = 0;
+                
+                if (imgAspect > slotAspect) {
+                    drawSW = img.height * slotAspect;
+                    drawSX = (img.width - drawSW) / 2;
+                } else {
+                    drawSH = img.width / slotAspect;
+                    drawSY = (img.height - drawSH) / 2;
+                }
+                
+                ctx.drawImage(img, drawSX, drawSY, drawSW, drawSH, -sw / 2, -sh / 2, sw, sh);
+
+                // 2.1 Draw Slot Border
+                if (selectedTemplate.borderWidth > 0) {
+                    ctx.restore(); // Exit clip
                     ctx.save();
+                    ctx.translate(sx + sw / 2, sy + sh / 2);
+                    ctx.rotate(((slot.rotation || 0) * Math.PI) / 180);
+                    ctx.strokeStyle = selectedTemplate.borderColor;
+                    ctx.lineWidth = (selectedTemplate.borderWidth / 2) * SCALE;
                     ctx.beginPath();
-                    ctx.roundRect(x, y, slotW, slotH, r);
-                    ctx.clip();
+                    ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
+                    ctx.stroke();
+                }
 
-                    // Cover fill
-                    const imgAspect = img.width / img.height;
-                    const slotAspect = slotW / slotH;
-                    let sx = 0, sy = 0, sw = img.width, sh = img.height;
-                    if (imgAspect > slotAspect) {
-                        sw = img.height * slotAspect;
-                        sx = (img.width - sw) / 2;
-                    } else {
-                        sh = img.width / slotAspect;
-                        sy = (img.height - sh) / 2;
-                    }
-                    ctx.drawImage(img, sx, sy, sw, sh, x, y, slotW, slotH);
-                    ctx.restore();
-                    res();
-                };
-                img.onerror = () => res();
-                img.src = photoSrc;
-            });
-        });
-
-        await Promise.all(drawPromises);
-
-        // Text elements
-        selectedTemplate.textElements.forEach((el) => {
-            // Re-calculate font size based on 420 scale (since canvas uses 420*SCALE as W)
-            // cqw in review = % of width.
-            // If font is 20px in 420px, it is 4.7% width.
-            // In canvas W = 420*SCALE. Font = 20*SCALE.
-            // This means logic matches perfectly.
-
-            ctx.save();
-            ctx.font = `${el.fontStyle === 'italic' ? 'italic ' : ''}${el.fontWeight} ${el.fontSize * SCALE}px ${el.fontFamily}`;
-            ctx.fillStyle = el.color;
-            ctx.globalAlpha = el.opacity;
-            ctx.textAlign = 'center';
-            const tx = (el.x / 100) * W;
-            const ty = (el.y / 100) * H;
-            ctx.translate(tx, ty);
-            ctx.rotate((el.rotation * Math.PI) / 180);
-            if (el.textShadow) {
-                // Parse simple shadow if possible or ignore for canvasMVP
-                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                ctx.shadowBlur = 4 * SCALE;
+                ctx.restore();
             }
-            if (el.letterSpacing) {
-                // ctx.letterSpacing is experimental, might not work in all browsers
-                // fallback or skip
+
+            // 3. Draw Foreground Overlay (Snapshot Protocol)
+            if (selectedTemplate.foregroundSnapshot) {
+                const fg = await loadImage(selectedTemplate.foregroundSnapshot);
+                ctx.drawImage(fg, 0, 0, W, H);
             }
-            ctx.fillText(el.text, 0, 0);
-            ctx.restore();
-        });
 
-        // Stickers
-        const stickerPromises = (selectedTemplate.stickers || []).map((stk) => {
-            return new Promise<void>((res) => {
-                const img = new Image();
-                img.crossOrigin = 'anonymous';
-                img.onload = () => {
-                    ctx.save();
-                    const tx = (stk.x / 100) * W;
-                    const ty = (stk.y / 100) * H;
-                    ctx.translate(tx, ty);
-                    ctx.rotate((stk.rotation * Math.PI) / 180);
-                    const w = stk.width * SCALE;
-                    const h = (img.height / img.width) * w;
-                    ctx.drawImage(img, -w / 2, -h / 2, w, h);
-                    ctx.restore();
-                    res();
-                };
-                img.onerror = () => res();
-                img.src = stk.src;
-            });
-        });
-
-        await Promise.all(stickerPromises);
-
-        // Watermark
-        if (selectedTemplate.watermarkText) {
-            ctx.font = `400 ${10 * SCALE}px sans-serif`;
-            ctx.fillStyle = 'rgba(0,0,0,0.3)';
-            ctx.textAlign = 'center';
-            ctx.fillText(selectedTemplate.watermarkText.toUpperCase(), W / 2, H - 10 * SCALE);
+            return compositeCanvas.toDataURL('image/jpeg', 0.95);
+        } catch (err) {
+            console.error('Error in generateComposite:', err);
+            return null;
         }
+    };
 
-        return compositeCanvas.toDataURL('image/jpeg', 0.92);
+    // ── Review Drag Logic ───────────────────────────────────────────
+    const startPhotoDrag = (e: React.MouseEvent, index: number) => {
+        if (step !== 'review') return;
+        e.preventDefault();
+        setIsDragging(true);
+        setDragTarget(index);
+        const transform = photoTransforms[index];
+        setDragStart({
+            x: e.clientX,
+            y: e.clientY,
+            photoX: transform.x,
+            photoY: transform.y
+        });
+        
+        // Bring to front on click
+        const maxZ = Math.max(...photoTransforms.map(p => p.zIndex || 0), 10);
+        updatePhotoTransform(index, { zIndex: maxZ + 1 });
+    };
+
+    const handleWorkspaceMouseMove = (e: React.MouseEvent) => {
+        if (!isDragging || dragTarget === null) return;
+        
+        const deltaX = ((e.clientX - dragStart.x) / window.innerWidth) * 100;
+        const deltaY = ((e.clientY - dragStart.y) / window.innerHeight) * 100;
+        
+        updatePhotoTransform(dragTarget, {
+            x: dragStart.photoX + deltaX,
+            y: dragStart.photoY + deltaY
+        });
+    };
+
+    const handleWorkspaceMouseUp = () => {
+        setIsDragging(false);
+        setDragTarget(null);
+    };
+
+    const updatePhotoTransform = (index: number, updates: any) => {
+        setPhotoTransforms(prev => prev.map((p, i) => i === index ? { ...p, ...updates } : p));
+    };
+
+    const handlePhotoContextMenu = (e: React.MouseEvent, index: number) => {
+        e.preventDefault();
+        setContextMenu({ x: e.clientX, y: e.clientY, index });
     };
 
     // ── Loading / Error ──────────────────────────────────────────────
@@ -735,8 +722,8 @@ export default function PublicBoothPage() {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white">
                 <div className="text-center max-w-md px-6">
-                    <div className="text-6xl mb-4">😕</div>
-                    <h1 className="text-2xl font-bold mb-2">Event Not Found</h1>
+                    <div className="w-16 h-1 bg-white/10 mx-auto mb-8 rounded-full" />
+                    <h1 className="text-2xl font-black uppercase tracking-widest mb-2">Access Denied</h1>
                     <p className="text-gray-400">This event may have ended or the link is incorrect.</p>
                 </div>
             </div>
@@ -785,7 +772,9 @@ export default function PublicBoothPage() {
                 {step === 'welcome' && (
                     <div className="flex-1 flex items-center justify-center px-6 animate-slideUp">
                         <div className="text-center max-w-2xl">
-                            <div className="text-7xl mb-6">📸</div>
+                            <div className="mb-8 flex justify-center">
+                                <div className="w-16 h-1 w-24 bg-white/10 rounded-full" />
+                            </div>
                             <h1
                                 className="text-5xl md:text-6xl font-bold mb-4 bg-clip-text text-transparent"
                                 style={{ backgroundImage: themeGradient }}
@@ -812,18 +801,18 @@ export default function PublicBoothPage() {
                                 Start Photo Booth →
                             </button>
 
-                            <div className="mt-16 grid grid-cols-3 gap-8 text-center max-w-lg mx-auto">
-                                <div>
-                                    <div className="text-3xl mb-2">🎨</div>
-                                    <p className="text-sm text-gray-500">Pick a template</p>
+                            <div className="mt-20 grid grid-cols-3 gap-12 text-center max-w-xl mx-auto">
+                                <div className="space-y-3">
+                                    <p className="text-[10px] font-black text-white uppercase tracking-[0.3em]">01. Protocol</p>
+                                    <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Select Layout</p>
                                 </div>
-                                <div>
-                                    <div className="text-3xl mb-2">📸</div>
-                                    <p className="text-sm text-gray-500">{boothSettings.autoSnap !== false ? 'Auto-snap photos' : 'Take photos'}</p>
+                                <div className="space-y-3">
+                                    <p className="text-[10px] font-black text-white uppercase tracking-[0.3em]">02. Execute</p>
+                                    <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Capture Phase</p>
                                 </div>
-                                <div>
-                                    <div className="text-3xl mb-2">📱</div>
-                                    <p className="text-sm text-gray-500">Scan QR to download</p>
+                                <div className="space-y-3">
+                                    <p className="text-[10px] font-black text-white uppercase tracking-[0.3em]">03. Distribute</p>
+                                    <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Digital Transfer</p>
                                 </div>
                             </div>
                         </div>
@@ -872,9 +861,9 @@ export default function PublicBoothPage() {
                 {/* ── STEP: Mirror (Preparation) ────────────────────────── */}
                 {step === 'mirror' && (
                     <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 animate-slideUp">
-                        <div className="w-full max-w-2xl text-center mb-6">
-                            <h2 className="text-3xl font-bold mb-2">Get Ready! ✨</h2>
-                            <p className="text-gray-400">Check your look and select your camera</p>
+                        <div className="w-full max-w-2xl text-center mb-8">
+                            <h2 className="text-4xl font-black text-white uppercase tracking-tight mb-3">Calibration Phase</h2>
+                            <p className="text-[11px] font-black text-neutral-500 uppercase tracking-[0.3em]">Adjust your position and verify optical feed</p>
                         </div>
 
                         <div className="relative w-full max-w-2xl aspect-video rounded-2xl overflow-hidden bg-black border-2 border-white/10 shadow-2xl">
@@ -883,7 +872,8 @@ export default function PublicBoothPage() {
                                 autoPlay
                                 playsInline
                                 muted
-                                className="w-full h-full object-cover transform scale-x-[-1]"
+                                className="w-full h-full object-cover"
+                                style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})` }}
                             />
 
                             {/* Camera Switcher */}
@@ -903,6 +893,21 @@ export default function PublicBoothPage() {
                                     </select>
                                 </div>
                             )}
+
+                            {/* Mirror Toggle Button */}
+                            <div className="absolute top-4 left-4 z-20">
+                                <button
+                                    onClick={() => setIsMirrored(!isMirrored)}
+                                    className="bg-black/50 backdrop-blur-md border border-white/20 rounded-full p-3 text-white hover:bg-black/70 transition-all flex items-center justify-center group"
+                                    title={isMirrored ? "Disable Mirror" : "Enable Mirror"}
+                                >
+                                    {isMirrored ? (
+                                        <FlipHorizontal size={18} className="group-hover:scale-110 transition-transform" />
+                                    ) : (
+                                        <Video size={18} className="group-hover:scale-110 transition-transform" />
+                                    )}
+                                </button>
+                            </div>
                         </div>
 
                         <div className="mt-8 flex gap-4">
@@ -915,11 +920,10 @@ export default function PublicBoothPage() {
 
                             <button
                                 onClick={handleMirrorReady}
-                                className="px-12 py-5 rounded-full text-white font-bold text-xl shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-3"
+                                className="px-16 py-6 rounded-full text-white font-black text-sm uppercase tracking-[0.4em] shadow-2xl transition-all hover:scale-105 active:scale-95 flex items-center gap-4"
                                 style={{ background: themeGradient, boxShadow: themeShadow }}
                             >
-                                <span>I'M READY!</span>
-                                <span className="text-2xl">📸</span>
+                                Initiate Sequence
                             </button>
                         </div>
                     </div>
@@ -927,35 +931,19 @@ export default function PublicBoothPage() {
 
                 {/* ── STEP: Capture (One-by-One) ────────────────────────── */}
                 {step === 'capture' && selectedTemplate && (() => {
-                    const W = 420;
-                    const pad = selectedTemplate.padding;
-                    const gap = selectedTemplate.gap;
-                    const cols = selectedTemplate.layout.cols;
-                    const rows = selectedTemplate.layout.rows;
-                    const gridW = W - pad * 2;
-                    const slotW = (gridW - gap * (cols - 1)) / cols;
-                    const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
-                    const slotH = slotW / slotAspectRatio;
-                    const gridH = slotH * rows + gap * (rows - 1);
-                    const H = gridH + pad * 2 + 60;
-
-                    const padPctX = (pad / W) * 100;
-                    const padPctY = ((pad + 30) / H) * 100;
-                    const gapPctX = (gap / W) * 100;
-                    const gapPctY = (gap / H) * 100;
-                    const cellW = (slotW / W) * 100;
-                    const cellH = (slotH / H) * 100;
+                    const W = selectedTemplate.width;
+                    const H = selectedTemplate.height;
 
                     return (
                         <div className="flex-1 flex flex-col items-center justify-center px-6 py-8">
                             {/* Header + progress bar */}
                             <div className="w-full max-w-2xl mb-4">
                                 <div className="flex items-center justify-between mb-2">
-                                    <h2 className="text-xl font-bold">
-                                        Photo <span style={{ color: tc }}>{currentSlotIndex + 1}</span> of {selectedTemplate.slots.length}
+                                    <h2 className="text-[11px] font-black text-white uppercase tracking-[0.3em]">
+                                        Sequence <span style={{ color: tc }}>{currentSlotIndex + 1}</span> / {selectedTemplate.slots.length}
                                     </h2>
-                                    <span className="text-sm text-gray-400">
-                                        {captureSubState === 'countdown' ? '🟡 Get ready…' : captureSubState === 'preview' ? '✅ Looking good!' : '📸 Tap to snap'}
+                                    <span className="text-[9px] font-black text-neutral-500 uppercase tracking-widest">
+                                        {captureSubState === 'countdown' ? 'Arming System...' : captureSubState === 'preview' ? 'Verify Capture' : 'Ready for Input'}
                                     </span>
                                 </div>
                                 <div className="flex gap-2">
@@ -977,45 +965,56 @@ export default function PublicBoothPage() {
 
                             {/* Camera / Template viewport — capped at 70vh so action bar is always visible */}
                             <div
-                                className="relative rounded-3xl overflow-hidden bg-black border-4 shadow-2xl mx-auto"
+                                className="relative overflow-hidden bg-black shadow-2xl mx-auto"
                                 style={{
-                                    borderColor: captureSubState === 'preview' ? tc : 'rgba(255,255,255,0.1)',
+                                    borderColor: captureSubState === 'preview' ? tc : (selectedTemplate.borderColor || 'rgba(255,255,255,0.1)'),
                                     boxShadow: captureSubState === 'preview' ? `0 0 40px ${tc}40` : undefined,
                                     aspectRatio: `${W} / ${H}`,
                                     height: 'min(70vh, 800px)',
                                     width: 'auto',
                                     maxWidth: '100%',
+                                    borderRadius: `${selectedTemplate.borderRadius}px`,
+                                    borderWidth: `${selectedTemplate.borderWidth || 0}px`,
+                                    borderStyle: 'solid'
                                 }}
                             >
-                                {/* Template background */}
-                                <div
-                                    className="absolute inset-0 w-full h-full"
-                                    style={{
-                                        background: selectedTemplate.background,
-                                        backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
-                                        backgroundSize: 'cover',
-                                        backgroundPosition: 'center',
-                                    }}
-                                />
+                                {/* 1. Template Background */}
+                                {selectedTemplate.backgroundSnapshot ? (
+                                    <img 
+                                        src={selectedTemplate.backgroundSnapshot} 
+                                        className="absolute inset-0 w-full h-full object-cover" 
+                                        alt=""
+                                    />
+                                ) : (
+                                    <div
+                                        className="absolute inset-0 w-full h-full"
+                                        style={{
+                                            background: selectedTemplate.background,
+                                            backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
+                                            backgroundSize: 'cover',
+                                            backgroundPosition: 'center',
+                                        }}
+                                    />
+                                )}
 
-                                {/* Slot Grid */}
+                                {/* Visual Matrix Slots */}
                                 <div className="absolute inset-0 w-full h-full">
-                                    {selectedTemplate.slots.map((_: any, i: number) => {
-                                        const r = Math.floor(i / cols);
-                                        const c = i % cols;
+                                    {selectedTemplate.slots.map((slot: any, i: number) => {
                                         const isCurrent = i === currentSlotIndex;
                                         const showCamera = isCurrent && (captureSubState === 'live' || captureSubState === 'countdown') && !capturedPhotos[i];
 
                                     return (
                                         <div
-                                            key={i}
+                                            key={slot.id}
                                             className="absolute overflow-hidden bg-black/10 transition-all duration-300"
                                             style={{
-                                                left: `${padPctX + c * (cellW + gapPctX)}%`,
-                                                top: `${padPctY + r * (cellH + gapPctY)}%`,
-                                                width: `${cellW}%`,
-                                                height: `${cellH}%`,
-                                                borderRadius: `${selectedTemplate.borderRadius}px`,
+                                                left: `${slot.x}%`,
+                                                top: `${slot.y}%`,
+                                                width: `${slot.width}%`,
+                                                height: `${slot.height}%`,
+                                                transform: `rotate(${slot.rotation || 0}deg)`,
+                                                borderRadius: `${selectedTemplate.borderRadius / 4}px`,
+                                                border: selectedTemplate.borderWidth > 0 ? `${selectedTemplate.borderWidth / 2}px solid ${selectedTemplate.borderColor}` : 'none',
                                                 outline: isCurrent && captureSubState === 'preview'
                                                     ? `3px solid ${tc}`
                                                     : isCurrent ? `2px solid ${tc}80` : 'none',
@@ -1031,13 +1030,13 @@ export default function PublicBoothPage() {
                                                         ref={setVideoRef}
                                                         autoPlay playsInline muted
                                                         className="absolute inset-0 w-full h-full object-cover"
-                                                        style={{ transform: 'scaleX(-1)' }}
+                                                        style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})` }}
                                                     />
                                                 </div>
                                             )}
                                             {!capturedPhotos[i] && !showCamera && (
                                                 <div className="absolute inset-0 flex items-center justify-center bg-gray-900/60">
-                                                    <span className="text-gray-600 text-2xl font-bold">{i + 1}</span>
+                                                    <span className="text-gray-600 text-[10px] font-black uppercase tracking-widest">P{i + 1}</span>
                                                 </div>
                                             )}
                                         </div>
@@ -1046,24 +1045,32 @@ export default function PublicBoothPage() {
                             </div>
 
                             {/* Text & Stickers overlay */}
-                            <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl" style={{ containerType: 'inline-size' }}>
-                                {selectedTemplate.textElements.map((el: any) => (
-                                    <div key={el.id} style={{
-                                        position: 'absolute', left: `${el.x}%`, top: `${el.y}%`,
-                                        transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                        color: el.color, fontSize: `calc(${el.fontSize} / 420 * 100cqw)`,
-                                        fontFamily: el.fontFamily, fontWeight: el.fontWeight,
-                                        fontStyle: el.fontStyle, width: 'max-content', textShadow: el.textShadow
-                                    }}>{el.text}</div>
-                                ))}
-                                {(selectedTemplate.stickers || []).map((stk: any) => (
-                                    <div key={stk.id} style={{
-                                        position: 'absolute', left: `${stk.x}%`, top: `${stk.y}%`,
-                                        width: `calc(${stk.width} / 420 * 100cqw)`,
-                                        transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`
-                                    }}><img src={stk.src} className="w-full h-auto drop-shadow-md" /></div>
-                                ))}
-                            </div>
+                            {selectedTemplate.foregroundSnapshot ? (
+                                <img 
+                                    src={selectedTemplate.foregroundSnapshot} 
+                                    className="absolute inset-0 w-full h-full pointer-events-none z-20" 
+                                    alt=""
+                                />
+                            ) : (
+                                <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl" style={{ containerType: 'inline-size' }}>
+                                    {selectedTemplate.textElements.map((el: any) => (
+                                        <div key={el.id} style={{
+                                            position: 'absolute', left: `${el.x}%`, top: `${el.y}%`,
+                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
+                                            color: el.color, fontSize: `calc(${el.fontSize} / ${selectedTemplate.width} * 100cqw)`,
+                                            fontFamily: el.fontFamily, fontWeight: el.fontWeight,
+                                            fontStyle: el.fontStyle, width: 'max-content', textShadow: el.textShadow
+                                        }}>{el.text}</div>
+                                    ))}
+                                    {(selectedTemplate.stickers || []).map((stk: any) => (
+                                        <div key={stk.id} style={{
+                                            position: 'absolute', left: `${stk.x}%`, top: `${stk.y}%`,
+                                            width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
+                                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`
+                                        }}><img src={stk.src} className="w-full h-auto drop-shadow-md" /></div>
+                                    ))}
+                                </div>
+                            )}
 
                             {/* Countdown is rendered as a fixed fullscreen overlay — see below */}
 
@@ -1101,26 +1108,13 @@ export default function PublicBoothPage() {
                                         }}
                                         autoPlay playsInline muted
                                         className="absolute inset-0 w-full h-full object-cover opacity-40 blur-xl"
-                                        style={{ transform: 'scaleX(-1)' }}
+                                        style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})` }}
                                     />
                                     
                                     {/* Main Focus Frame */}
                                     <div className="relative z-10 border-8 border-white/20 rounded-[40px] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.8)] transition-all duration-500 scale-110"
                                         style={{ 
-                                            aspectRatio: (() => {
-                                                const W = 420;
-                                                const PAD = selectedTemplate.padding;
-                                                const GAP = selectedTemplate.gap;
-                                                const cols = selectedTemplate.layout.cols;
-                                                const rows = selectedTemplate.layout.rows;
-                                                const gridW = W - PAD * 2;
-                                                const slotW = (gridW - GAP * (cols - 1)) / cols;
-                                                const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
-                                                const slotH = slotW / slotAspectRatio;
-                                                const gridH = slotH * rows + GAP * (rows - 1);
-                                                const H = gridH + PAD * 2 + 60;
-                                                return `${W} / ${H}`;
-                                            })(),
+                                            aspectRatio: `${selectedTemplate.width} / ${selectedTemplate.height}`,
                                             width: 'min(85vw, 1000px)', 
                                             maxHeight: '75vh' 
                                         }}>
@@ -1132,7 +1126,7 @@ export default function PublicBoothPage() {
                                             }}
                                             autoPlay playsInline muted
                                             className="w-full h-full object-cover"
-                                            style={{ transform: 'scaleX(-1)' }}
+                                            style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})` }}
                                         />
                                         {/* Vignette & Corner Accents */}
                                         <div className="absolute inset-0 shadow-[inset_0_0_150px_rgba(0,0,0,0.6)]" />
@@ -1194,19 +1188,17 @@ export default function PublicBoothPage() {
                                                 style={{ width: `${gestureHoldProgress}%`, transition: 'width 0.05s linear' }}
                                             />
                                         )}
-                                        <span className="relative text-lg">📸</span>
-                                        <span className="relative text-sm font-bold">
+                                        <span className="relative text-[10px] font-black uppercase tracking-widest">
                                             {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm'
-                                                ? `Snapping… ${Math.round(gestureHoldProgress)}%`
-                                                : 'Snap!'}
+                                                ? `Initializing... ${Math.round(gestureHoldProgress)}%`
+                                                : 'Trigger Capture'}
                                         </span>
                                     </button>
 
                                     {boothSettings.gesturesEnabled && (
-                                        <div className="shrink-0 flex items-center gap-1 px-3 py-2.5 rounded-xl text-xs text-white/40"
+                                        <div className="shrink-0 flex items-center gap-1 px-3 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest text-white/40"
                                             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                                            <span>👍</span>
-                                            <span>or snap</span>
+                                            <span>Manual Override</span>
                                         </div>
                                     )}
 
@@ -1220,6 +1212,39 @@ export default function PublicBoothPage() {
                                             ))}
                                         </select>
                                     )}
+
+                                    {/* Mirror Toggle Button */}
+                                    <button
+                                        onClick={() => setIsMirrored(!isMirrored)}
+                                        className="bg-black/50 border border-white/15 rounded-xl p-3 text-white hover:bg-white/10 transition-all flex items-center justify-center group shrink-0"
+                                        title={isMirrored ? "Disable Mirror" : "Enable Mirror"}
+                                    >
+                                        {isMirrored ? (
+                                            <FlipHorizontal size={18} className="group-hover:scale-110 transition-transform" />
+                                        ) : (
+                                            <Video size={18} className="group-hover:scale-110 transition-transform" />
+                                        )}
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Zoom Slider at the Bottom */}
+                            {captureSubState === 'live' && (
+                                <div className="w-full max-w-md mt-2 flex items-center gap-4 bg-black/40 backdrop-blur-xl border border-white/10 px-6 py-3 rounded-2xl shadow-2xl">
+                                    <ZoomOut size={16} className="text-white/40" />
+                                    <input 
+                                        type="range" 
+                                        min={1} 
+                                        max={3} 
+                                        step={0.1} 
+                                        value={zoom} 
+                                        onChange={(e) => setZoom(parseFloat(e.target.value))}
+                                        className="flex-1 accent-white"
+                                    />
+                                    <ZoomIn size={16} className="text-white/40" />
+                                    <span className="text-[10px] font-black text-white/60 uppercase tracking-widest min-w-[3rem] text-right">
+                                        {zoom.toFixed(1)}x
+                                    </span>
                                 </div>
                             )}
 
@@ -1259,8 +1284,7 @@ export default function PublicBoothPage() {
                                                 transition: 'all 0.2s',
                                             }}
                                         >
-                                            {boothSettings.gesturesEnabled && <span className="text-base">✋</span>}
-                                            <span>🔄 Retake</span>
+                                            <span className="text-[10px] font-black uppercase tracking-widest">Retake Sequence</span>
                                         </button>
                                     </div>
 
@@ -1288,15 +1312,15 @@ export default function PublicBoothPage() {
                                             />
                                         )}
                                         <div className="absolute inset-0 flex items-center justify-center gap-2">
-                                            <span className="text-base">
-                                                {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm' ? '👍' : '✅'}
+                                            <span className="text-[10px] font-black uppercase tracking-widest text-white/40">
+                                                {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm' ? 'VERIFIED' : 'READY'}
                                             </span>
-                                            <span className="text-sm font-semibold text-white/80">
+                                            <span className="text-[10px] font-black uppercase tracking-widest text-white/80">
                                                 {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm'
-                                                    ? `Keeping now… ${Math.round(gestureHoldProgress)}%`
+                                                    ? `Committing... ${Math.round(gestureHoldProgress)}%`
                                                     : currentSlotIndex + 1 >= selectedTemplate.slots.length
-                                                    ? 'Keep & Finish'
-                                                    : 'Keep & Next →'}
+                                                    ? 'Finalize Sequence'
+                                                    : 'Continue Protocol'}
                                             </span>
                                         </div>
                                         {/* Tap anywhere = immediate keep */}
@@ -1353,125 +1377,108 @@ export default function PublicBoothPage() {
                 {/* ── STEP: Review ──────────────────────────────────────── */}
                 {step === 'review' && selectedTemplate && (
                     <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 animate-slideUp">
-                        <h2 className="text-3xl font-bold mb-8">Looking Good? 🔥</h2>
+                        <h2 className="text-4xl font-black text-white uppercase tracking-tighter mb-10">Verification Protocol</h2>
 
                         {/* Composite preview - Unified Layout Engine */}
                         <div
-                            className="relative shadow-2xl mx-auto overflow-hidden rounded-3xl"
+                            className="relative shadow-2xl mx-auto overflow-hidden"
                             style={{
                                 width: 'min(90vw, 600px)',
-                                aspectRatio: (() => {
-                                    const W = 420;
-                                    const PAD = selectedTemplate.padding;
-                                    const GAP = selectedTemplate.gap;
-                                    const cols = selectedTemplate.layout.cols;
-                                    const rows = selectedTemplate.layout.rows;
-                                    const gridW = W - PAD * 2;
-                                    const slotW = (gridW - GAP * (cols - 1)) / cols;
-                                    const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
-                                    const slotH = slotW / slotAspectRatio;
-                                    const gridH = slotH * rows + GAP * (rows - 1);
-                                    const H = gridH + PAD * 2 + 60; // 60 for watermark
-                                    return `${W} / ${H}`;
-                                })(),
-                                containerType: 'inline-size', // Enable cqw units
+                                aspectRatio: `${selectedTemplate.width} / ${selectedTemplate.height}`,
+                                containerType: 'inline-size', 
+                                borderRadius: `${selectedTemplate.borderRadius}px`,
+                                borderWidth: `${selectedTemplate.borderWidth || 0}px`,
+                                borderColor: selectedTemplate.borderColor || 'transparent',
+                                borderStyle: 'solid'
                             }}
                         >
                             {/* 1. Template Background Layer */}
-                            <div
-                                className="absolute inset-0 w-full h-full"
-                                style={{
-                                    background: selectedTemplate.background.includes('gradient') || selectedTemplate.background.includes('url')
-                                        ? selectedTemplate.background
-                                        : selectedTemplate.background,
-                                    backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
-                                    backgroundSize: 'cover',
-                                    backgroundPosition: 'center',
-                                }}
-                            />
+                            {selectedTemplate.backgroundSnapshot ? (
+                                <img 
+                                    src={selectedTemplate.backgroundSnapshot} 
+                                    className="absolute inset-0 w-full h-full object-cover" 
+                                    alt=""
+                                />
+                            ) : (
+                                <div
+                                    className="absolute inset-0 w-full h-full"
+                                    style={{
+                                        background: selectedTemplate.background,
+                                        backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
+                                        backgroundSize: 'cover',
+                                        backgroundPosition: 'center',
+                                    }}
+                                />
+                            )}
 
-                            {/* 2. Slot Grid (Render Photos) */}
-                            <div className="absolute inset-0 w-full h-full">
-                                {selectedTemplate.slots.map((_: any, i: number) => {
-                                    const cols = selectedTemplate.layout.cols;
-                                    const rows = selectedTemplate.layout.rows;
-                                    const pad = selectedTemplate.padding;
-                                    const gap = selectedTemplate.gap;
-
-                                    const W = 420;
-                                    const gridW = W - pad * 2;
-                                    const slotW = (gridW - gap * (cols - 1)) / cols;
-                                    const slotAspectRatio = rows > cols ? 3 / 2 : 16 / 9;
-                                    const slotH = slotW / slotAspectRatio;
-                                    const gridH = slotH * rows + gap * (rows - 1);
-                                    const H = gridH + pad * 2 + 60;
-
-                                    const padPctX = (pad / W) * 100;
-                                    const padPctY = ((pad + 30) / H) * 100; // Add 30 to center vertically, matching generateComposite
-                                    const gapPctX = (gap / W) * 100;
-                                    const gapPctY = (gap / H) * 100;
-
-                                    const cellW = (slotW / W) * 100;
-                                    const cellH = (slotH / H) * 100;
-
-
-                                    const r = Math.floor(i / cols);
-                                    const c = i % cols;
-
-                                    return (
-                                        <div
-                                            key={i}
-                                            className="absolute overflow-hidden rounded-lg bg-black/10"
-                                            style={{
-                                                left: `${padPctX + (c * (cellW + gapPctX))}%`,
-                                                top: `${padPctY + (r * (cellH + gapPctY))}%`,
-                                                width: `${cellW}%`,
-                                                height: `${cellH}%`,
-                                                borderRadius: `${selectedTemplate.borderRadius}px`, // approximate match? 
-                                                // Actually lets use % or just standard px since container scales.
-                                                // To match exactly, we might want to scale radius too. 
-                                                // For now, fixed px is usually ok or use %.
-                                            }}
-                                        >
-                                            {capturedPhotos[i] ? (
-                                                <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
-                                            ) : (
-                                                <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-500">No photo</div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
+                            {/* 2. Slot Matrix (Render Photos - Draggable in Review) */}
+                            <div className="absolute inset-0 w-full h-full" 
+                                 onMouseMove={handleWorkspaceMouseMove}
+                                 onMouseUp={handleWorkspaceMouseUp}
+                                 onMouseLeave={handleWorkspaceMouseUp}>
+                                {photoTransforms.map((transform: any, i: number) => (
+                                    <div
+                                        key={i}
+                                        onMouseDown={(e) => startPhotoDrag(e, i)}
+                                        onContextMenu={(e) => handlePhotoContextMenu(e, i)}
+                                        className={`absolute overflow-hidden transition-shadow duration-300 cursor-move ${dragTarget === i ? 'ring-2 ring-white/50 shadow-2xl' : ''}`}
+                                        style={{
+                                            left: `${transform.x}%`,
+                                            top: `${transform.y}%`,
+                                            width: `${transform.width}%`,
+                                            height: `${transform.height}%`,
+                                            transform: `rotate(${transform.rotation || 0}deg) scale(${transform.scale || 1})`,
+                                            zIndex: transform.zIndex || (i + 10),
+                                            borderRadius: `${selectedTemplate.borderRadius / 4}px`,
+                                            border: selectedTemplate.borderWidth > 0 ? `${selectedTemplate.borderWidth / 2}px solid ${selectedTemplate.borderColor}` : 'none',
+                                        }}
+                                    >
+                                        {capturedPhotos[i] ? (
+                                            <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="w-full h-full object-cover pointer-events-none" />
+                                        ) : (
+                                            <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-500">No photo</div>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
 
                             {/* 3. Text & Stickers Overlay */}
-                            <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl">
-                                {selectedTemplate.textElements.map((el) => (
-                                    <div key={el.id} style={{
-                                        position: 'absolute',
-                                        left: `${el.x}%`, top: `${el.y}%`,
-                                        transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                        color: el.color,
-                                        fontSize: `calc(${el.fontSize} / 420 * 100cqw)`,
-                                        fontFamily: el.fontFamily,
-                                        fontWeight: el.fontWeight,
-                                        fontStyle: el.fontStyle,
-                                        width: 'max-content',
-                                        textShadow: el.textShadow
-                                    }}>
-                                        {el.text}
-                                    </div>
-                                ))}
-                                {(selectedTemplate.stickers || []).map((stk) => (
-                                    <div key={stk.id} style={{
-                                        position: 'absolute',
-                                        left: `${stk.x}%`, top: `${stk.y}%`,
-                                        width: `calc(${stk.width} / 420 * 100cqw)`,
-                                        transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`
-                                    }}>
-                                        <img src={stk.src} className="w-full h-auto drop-shadow-md" />
-                                    </div>
-                                ))}
-                            </div>
+                            {selectedTemplate.foregroundSnapshot ? (
+                                <img 
+                                    src={selectedTemplate.foregroundSnapshot} 
+                                    className="absolute inset-0 w-full h-full pointer-events-none z-20" 
+                                    alt=""
+                                />
+                            ) : (
+                                <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl">
+                                    {selectedTemplate.textElements.map((el) => (
+                                        <div key={el.id} style={{
+                                            position: 'absolute',
+                                            left: `${el.x}%`, top: `${el.y}%`,
+                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
+                                            color: el.color,
+                                            fontSize: `calc(${el.fontSize} / ${selectedTemplate.width} * 100cqw)`,
+                                            fontFamily: el.fontFamily,
+                                            fontWeight: el.fontWeight,
+                                            fontStyle: el.fontStyle,
+                                            width: 'max-content',
+                                            textShadow: el.textShadow
+                                        }}>
+                                            {el.text}
+                                        </div>
+                                    ))}
+                                    {(selectedTemplate.stickers || []).map((stk) => (
+                                        <div key={stk.id} style={{
+                                            position: 'absolute',
+                                            left: `${stk.x}%`, top: `${stk.y}%`,
+                                            width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
+                                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`
+                                        }}>
+                                            <img src={stk.src} className="w-full h-auto drop-shadow-md" />
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
 
                             {/* Watermark */}
                             {selectedTemplate.watermarkText && (
@@ -1481,14 +1488,14 @@ export default function PublicBoothPage() {
                             )}
                         </div>
 
-                        {/* Actions + 👍 gesture for confirm */}
+                        {/* Actions + Gesture for confirm */}
                         <div className="flex flex-col items-center gap-3 mt-8">
                             <div className="flex gap-4">
                                 <button
                                     onClick={handleRetake}
                                     className="px-6 py-3 rounded-xl border-2 border-white/20 text-white hover:bg-white/10 transition-all font-semibold flex items-center gap-2"
                                 >
-                                    🔄 Retake All
+                                    Reset All
                                 </button>
                                 <button
                                     id="confirm-qr-button"
@@ -1503,7 +1510,7 @@ export default function PublicBoothPage() {
                                             Generating QR...
                                         </span>
                                     ) : (
-                                        '✅ Looks Great!'
+                                        'Verify & Generate'
                                     )}
                                 </button>
                             </div>
@@ -1529,7 +1536,9 @@ export default function PublicBoothPage() {
                 {step === 'qr' && downloadUrl && (
                     <div className="flex-1 flex items-center justify-center px-6 animate-slideUp">
                         <div className="text-center max-w-lg">
-                            <div className="text-6xl mb-4">📱</div>
+                            <div className="mb-8 flex justify-center">
+                                <div className="w-16 h-1 w-24 bg-white/10 rounded-full" />
+                            </div>
                             <h2
                                 className="text-4xl font-bold mb-2 bg-clip-text text-transparent"
                                 style={{ backgroundImage: themeGradient }}
@@ -1576,7 +1585,7 @@ export default function PublicBoothPage() {
                                     className="px-8 py-3 rounded-xl text-white font-bold shadow-xl hover:shadow-2xl transition-all hover:scale-105"
                                     style={{ background: themeGradient, boxShadow: themeShadow }}
                                 >
-                                    📸 Next Guest
+                                    New Session
                                 </button>
                             </div>
                         </div>
@@ -1587,9 +1596,11 @@ export default function PublicBoothPage() {
                 {step === 'done' && (
                     <div className="flex-1 flex items-center justify-center px-6 animate-slideUp">
                         <div className="text-center">
-                            <div className="text-8xl mb-6">🎉</div>
-                            <h2 className="text-4xl font-bold mb-3">Photo Saved!</h2>
-                            <p className="text-gray-400 text-lg mb-8">Your photo has been downloaded.</p>
+                            <div className="mb-10 flex justify-center">
+                                <div className="w-16 h-1 bg-white/10 rounded-full" />
+                            </div>
+                            <h2 className="text-4xl font-black text-white uppercase tracking-tighter mb-3">Session Complete</h2>
+                            <p className="text-[11px] font-black text-neutral-500 uppercase tracking-[0.3em] mb-10">Data successfully transferred to your device</p>
                             <button
                                 onClick={() => {
                                     setCapturedPhotos([]);
@@ -1600,7 +1611,7 @@ export default function PublicBoothPage() {
                                 className="px-8 py-3 rounded-xl text-white font-bold shadow-xl hover:shadow-2xl transition-all hover:scale-105"
                                 style={{ background: themeGradient, boxShadow: themeShadow }}
                             >
-                                📸 Take Another Photo
+                                    Initiate New Session
                             </button>
                         </div>
                     </div>
@@ -1610,6 +1621,107 @@ export default function PublicBoothPage() {
                 <div className="text-center py-4 text-xs text-gray-600">
                     Powered by <span className="font-semibold text-gray-400">SnapWrap</span>
                 </div>
+
+                {/* ── Context Menu ── */}
+                {contextMenu && (
+                    <>
+                        <div className="fixed inset-0 z-[190]" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
+                        <div 
+                            className="fixed z-[200] bg-gray-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl py-2 min-w-[180px] animate-in fade-in zoom-in duration-200"
+                            style={{ left: contextMenu.x, top: contextMenu.y }}
+                        >
+                            <div className="px-4 py-2 border-b border-white/5 mb-1">
+                                <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Edit Photo {contextMenu.index + 1}</p>
+                            </div>
+                            <button 
+                                onClick={() => {
+                                    if (!selectedTemplate) return;
+                                    const slot = selectedTemplate.slots[contextMenu.index];
+                                    updatePhotoTransform(contextMenu.index, { 
+                                        x: slot.x, y: slot.y, rotation: slot.rotation || 0, scale: 1 
+                                    });
+                                    setContextMenu(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-white/5 text-sm flex items-center gap-3 transition-colors"
+                            >
+                                <RotateCcw size={14} className="text-indigo-400" />
+                                <span>Reset Position</span>
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    const transform = photoTransforms[contextMenu.index];
+                                    updatePhotoTransform(contextMenu.index, { rotation: (transform.rotation || 0) + 90 });
+                                    setContextMenu(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-white/5 text-sm flex items-center gap-3 transition-colors"
+                            >
+                                <RotateCw size={14} className="text-indigo-400" />
+                                <span>Rotate 90°</span>
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    const transform = photoTransforms[contextMenu.index];
+                                    updatePhotoTransform(contextMenu.index, { scale: (transform.scale || 1) + 0.1 });
+                                    setContextMenu(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-white/5 text-sm flex items-center gap-3 transition-colors"
+                            >
+                                <Plus size={14} className="text-indigo-400" />
+                                <span>Scale Up</span>
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    const transform = photoTransforms[contextMenu.index];
+                                    updatePhotoTransform(contextMenu.index, { scale: Math.max(0.1, (transform.scale || 1) - 0.1) });
+                                    setContextMenu(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-white/5 text-sm flex items-center gap-3 transition-colors"
+                            >
+                                <X size={14} className="text-indigo-400" />
+                                <span>Scale Down</span>
+                            </button>
+                            <div className="h-px bg-white/5 my-1" />
+                            <button 
+                                onClick={() => {
+                                    const maxZ = Math.max(...photoTransforms.map(p => p.zIndex || 0));
+                                    updatePhotoTransform(contextMenu.index, { zIndex: maxZ + 1 });
+                                    setContextMenu(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-white/5 text-sm flex items-center gap-3 transition-colors"
+                            >
+                                <ArrowUp size={14} className="text-green-400" />
+                                <span>Bring to Front</span>
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    const minZ = Math.min(...photoTransforms.map(p => p.zIndex || 0));
+                                    updatePhotoTransform(contextMenu.index, { zIndex: minZ - 1 });
+                                    setContextMenu(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-white/5 text-sm flex items-center gap-3 transition-colors"
+                            >
+                                <ArrowDown size={14} className="text-green-400" />
+                                <span>Send to Back</span>
+                            </button>
+                            <div className="h-px bg-white/5 my-1" />
+                            <button 
+                                onClick={() => {
+                                    const newPhotos = [...capturedPhotos];
+                                    newPhotos[contextMenu.index] = null as any;
+                                    setCapturedPhotos(newPhotos);
+                                    setCurrentSlotIndex(contextMenu.index);
+                                    setStep('capture');
+                                    setCaptureSubState('live');
+                                    setContextMenu(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-red-500/10 text-sm flex items-center gap-3 transition-colors text-red-400"
+                            >
+                                <Trash2 size={14} />
+                                <span>Retake Photo</span>
+                            </button>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
     );

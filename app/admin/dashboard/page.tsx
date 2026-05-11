@@ -5,6 +5,16 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { 
+    Calendar, 
+    Camera, 
+    HardDrive, 
+    Activity, 
+    ArrowUpRight, 
+    Clock, 
+    Plus, 
+    Palette 
+} from 'lucide-react';
 
 export default function AdminDashboard() {
     const [stats, setStats] = useState({ events: 0, photos: 0, storage: '0 MB' });
@@ -33,7 +43,7 @@ export default function AdminDashboard() {
             setStats({
                 events: eventsCount || 0,
                 photos: photosCount || 0,
-                storage: `${((photosCount || 0) * 0.8).toFixed(1)} MB`, // Updated est. to 0.8MB (compressed)
+                storage: `${((photosCount || 0) * 0.8).toFixed(1)} MB`,
             });
             setRecentPhotos(activity || []);
         } catch (error) {
@@ -44,105 +54,131 @@ export default function AdminDashboard() {
     };
 
     const statItems = [
-        { label: 'Total Events', value: stats.events.toString(), icon: '📅', color: 'text-blue-500', bg: 'bg-blue-500/10' },
-        { label: 'Total Photos', value: stats.photos.toString(), icon: '📸', color: 'text-purple-500', bg: 'bg-purple-500/10' },
-        { label: 'Storage Used', value: stats.storage, icon: '💾', color: 'text-orange-500', bg: 'bg-orange-500/10' },
-        { label: 'System Status', value: 'Active', icon: '🟢', color: 'text-green-500', bg: 'bg-green-500/10' },
+        { label: 'Total Events', value: stats.events.toString(), icon: Calendar, color: 'text-neutral-900', bg: 'bg-neutral-100' },
+        { label: 'Total Photos', value: stats.photos.toString(), icon: Camera, color: 'text-neutral-900', bg: 'bg-neutral-100' },
+        { label: 'Storage Used', value: stats.storage, icon: HardDrive, color: 'text-neutral-900', bg: 'bg-neutral-100' },
+        { label: 'System Status', value: 'Active', icon: Activity, color: 'text-neutral-900', bg: 'bg-neutral-100' },
     ];
 
     if (loading) {
-        return <div className="p-8 text-center text-gray-500">Loading Dashboard stats...</div>;
+        return (
+            <div className="flex items-center justify-center h-[60vh]">
+                <div className="w-6 h-6 border-2 border-neutral-200 border-t-neutral-900 rounded-full animate-spin" />
+            </div>
+        );
     }
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="flex justify-between items-center">
+        <div className="space-y-12">
+            {/* Header */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div>
-                    <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
-                    <p className="text-gray-400">Overview of your photo booth usage</p>
+                    <h1 className="text-4xl font-bold tracking-tight text-neutral-900 mb-2">Overview</h1>
+                    <p className="text-neutral-500 font-medium">Monitoring your photo booth ecosystem.</p>
                 </div>
-                <Link href="/booth">
-                    <Button variant="ghost">Launch Booth ↗</Button>
-                </Link>
+                <div className="flex items-center gap-3">
+                    <Link href="/booth">
+                        <Button variant="ghost" className="rounded-full px-6 font-semibold border-neutral-200">
+                            Launch Booth <ArrowUpRight size={16} className="ml-2" />
+                        </Button>
+                    </Link>
+                </div>
             </div>
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {statItems.map((stat) => (
-                    <Card key={stat.label} className="p-6 hover:bg-white/5 transition-colors border-white/5">
-                        <div className="flex justify-between items-start mb-4">
-                            <div className={`p-3 rounded-xl text-2xl ${stat.bg} ${stat.color}`}>
-                                {stat.icon}
+                {statItems.map((stat) => {
+                    const Icon = stat.icon;
+                    return (
+                        <Card key={stat.label} className="p-8 hover:shadow-xl transition-all duration-300 border-neutral-100 group">
+                            <div className="flex justify-between items-start mb-6">
+                                <div className={`p-3 rounded-2xl ${stat.bg} ${stat.color} transition-transform group-hover:scale-110`}>
+                                    <Icon size={24} />
+                                </div>
                             </div>
-                        </div>
-                        <h3 className="text-3xl font-bold mb-1">{stat.value}</h3>
-                        <p className="text-sm text-gray-400">{stat.label}</p>
-                    </Card>
-                ))}
+                            <h3 className="text-4xl font-bold tracking-tight mb-2 text-neutral-900">{stat.value}</h3>
+                            <p className="text-sm font-bold text-neutral-400 uppercase tracking-widest">{stat.label}</p>
+                        </Card>
+                    );
+                })}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
                 {/* Recent Activity */}
-                <Card className="p-6 lg:col-span-2 border-white/5">
-                    <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-xl font-bold">Recent Uploads</h3>
-                        <Link href="/admin/events">
-                            <span className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer">View All Events</span>
+                <div className="lg:col-span-2 space-y-6">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-xl font-bold tracking-tight">Recent Activity</h3>
+                        <Link href="/admin/events" className="text-sm font-bold text-neutral-400 hover:text-neutral-900 transition-colors uppercase tracking-widest">
+                            View All
                         </Link>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                         {recentPhotos.length === 0 ? (
-                            <p className="text-gray-500 text-sm italic">No recent activity.</p>
+                            <div className="p-12 text-center rounded-3xl bg-neutral-50 border border-dashed border-neutral-200">
+                                <p className="text-neutral-400 font-medium">No recent activity recorded yet.</p>
+                            </div>
                         ) : (
                             recentPhotos.map((photo) => (
-                                <div key={photo.id} className="flex items-center gap-4 p-4 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
-                                    <div className="w-12 h-12 rounded-lg bg-gray-800 overflow-hidden flex-shrink-0">
-                                        {(photo.final_url || photo.image_url) && (
-                                            <img
-                                                src={photo.final_url || photo.image_url}
-                                                alt="Recent"
-                                                className="w-full h-full object-cover"
-                                            />
-                                        )}
-                                    </div>
-                                    <div>
-                                        <div className="font-medium">New photo in <span className="text-white font-bold">{photo.events?.name || 'Unknown Event'}</span></div>
-                                        <div className="text-xs text-gray-400">
-                                            {new Date(photo.created_at).toLocaleString()}
+                                <div key={photo.id} className="group flex items-center justify-between p-4 rounded-2xl bg-white border border-neutral-100 hover:border-neutral-900 transition-all duration-300">
+                                    <div className="flex items-center gap-5">
+                                        <div className="w-14 h-14 rounded-xl bg-neutral-100 overflow-hidden flex-shrink-0 border border-neutral-100">
+                                            {(photo.final_url || photo.image_url) && (
+                                                <img
+                                                    src={photo.final_url || photo.image_url}
+                                                    alt="Recent"
+                                                    className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500"
+                                                />
+                                            )}
                                         </div>
+                                        <div>
+                                            <div className="font-bold text-neutral-900">
+                                                Shot taken at <span className="text-neutral-500 font-medium">{photo.events?.name || 'Unknown Event'}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-xs font-bold text-neutral-400 uppercase tracking-tighter mt-1">
+                                                <Clock size={12} />
+                                                {new Date(photo.created_at).toLocaleString()}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity pr-4">
+                                        <ArrowUpRight size={20} className="text-neutral-300" />
                                     </div>
                                 </div>
                             ))
                         )}
                     </div>
-                </Card>
+                </div>
 
                 {/* Quick Actions */}
-                <Card className="p-6 border-white/5 h-fit">
-                    <h3 className="text-xl font-bold mb-6">Quick Actions</h3>
-                    <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-6">
+                    <h3 className="text-xl font-bold tracking-tight">Quick Actions</h3>
+                    <div className="space-y-4">
                         <Link href="/admin/events/new">
-                            <div className="p-4 rounded-xl bg-gradient-to-r from-blue-600/20 to-blue-400/10 border border-blue-500/20 hover:border-blue-500/50 transition-all cursor-pointer flex items-center gap-4 group">
-                                <div className="text-2xl group-hover:scale-110 transition-transform">📅</div>
+                            <div className="p-6 rounded-3xl bg-neutral-900 text-white hover:bg-neutral-800 transition-all cursor-pointer flex items-center gap-5 group shadow-xl shadow-neutral-200">
+                                <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <Plus size={24} />
+                                </div>
                                 <div>
-                                    <div className="font-bold text-blue-100">Create Event</div>
-                                    <div className="text-xs text-blue-300">Set up a new booth</div>
+                                    <div className="font-bold tracking-tight">Create Event</div>
+                                    <div className="text-xs text-neutral-400 font-medium">Launch a new experience</div>
                                 </div>
                             </div>
                         </Link>
 
                         <Link href="/admin/templates/new">
-                            <div className="p-4 rounded-xl bg-gradient-to-r from-purple-600/20 to-purple-400/10 border border-purple-500/20 hover:border-purple-500/50 transition-all cursor-pointer flex items-center gap-4 group">
-                                <div className="text-2xl group-hover:scale-110 transition-transform">🎨</div>
+                            <div className="p-6 rounded-3xl bg-white border border-neutral-100 hover:border-neutral-900 transition-all cursor-pointer flex items-center gap-5 group">
+                                <div className="w-12 h-12 rounded-2xl bg-neutral-50 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <Palette size={24} />
+                                </div>
                                 <div>
-                                    <div className="font-bold text-purple-100">Design Template</div>
-                                    <div className="text-xs text-purple-300">Create a new layout</div>
+                                    <div className="font-bold tracking-tight text-neutral-900">Design Template</div>
+                                    <div className="text-xs text-neutral-400 font-medium">Customize the look</div>
                                 </div>
                             </div>
                         </Link>
                     </div>
-                </Card>
+                </div>
             </div>
         </div>
     );
