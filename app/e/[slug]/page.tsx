@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { TemplateConfig, PRESET_TEMPLATES } from '@/components/templates/TemplateDesigner';
 import TemplatePreview from '@/components/templates/TemplatePreview';
 import QRCode from 'react-qr-code';
-import { GestureDetector, GestureMode } from '@/components/camera/GestureDetector';
+
 import { 
     FlipHorizontal, Video, ZoomIn, ZoomOut, 
     RotateCcw, RotateCw, Plus, X, ArrowUp, ArrowDown, Trash2, Printer 
@@ -29,7 +29,6 @@ interface BoothSettings {
     countdownSeconds: number;
     autoSnap: boolean;
     themeColor: string;
-    gesturesEnabled: boolean;
 }
 
 const DEFAULT_BOOTH_SETTINGS: BoothSettings = {
@@ -37,7 +36,6 @@ const DEFAULT_BOOTH_SETTINGS: BoothSettings = {
     countdownSeconds: 3,
     autoSnap: true,
     themeColor: '#6366f1',
-    gesturesEnabled: true,
 };
 
 // Helper to derive lighter/darker shades from a hex color
@@ -76,9 +74,7 @@ export default function PublicBoothPage() {
     const [captureSubState, setCaptureSubState] = useState<'live' | 'countdown' | 'preview'>('live');
     const [countdown, setCountdown] = useState<number | null>(null);
     const [flashActive, setFlashActive] = useState(false);
-    // Gesture hold feedback (driven by GestureDetector's onHoldProgress)
-    const [gestureHoldProgress, setGestureHoldProgress] = useState(0);
-    const [gestureHoldTarget, setGestureHoldTarget] = useState<'retake' | 'confirm' | null>(null);
+
     // Auto-keep: after a snap, photo auto-advances after AUTO_KEEP_MS unless retaken
     const [autoKeepProgress, setAutoKeepProgress] = useState(0);
     const autoKeepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -92,12 +88,7 @@ export default function PublicBoothPage() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const countdownRef = useRef<NodeJS.Timeout | null>(null);
-    // Dedicated hidden video for GestureDetector — always has the stream,
-    // independent of whether the slot's visible <video> is mounted or not
-    const gestureVideoRef = useRef<HTMLVideoElement>(null);
-    // Separate hidden video element used for gesture detection on the Review step
-    const reviewVideoRef = useRef<HTMLVideoElement>(null);
-    const reviewStreamRef = useRef<MediaStream | null>(null);
+
 
     // Derived theme values
     const tc = boothSettings.themeColor || '#6366f1';
@@ -214,11 +205,7 @@ export default function PublicBoothPage() {
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
             }
-            // Always pipe stream to the dedicate gesture video too
-            if (gestureVideoRef.current) {
-                gestureVideoRef.current.srcObject = stream;
-                gestureVideoRef.current.play().catch(() => { });
-            }
+
         } catch (err) {
             console.error('Camera error:', err);
             alert('Could not access camera. Please allow camera permissions.');
@@ -236,33 +223,10 @@ export default function PublicBoothPage() {
     useEffect(() => {
         if ((step === 'mirror' || step === 'capture') && streamRef.current) {
             if (videoRef.current) videoRef.current.srcObject = streamRef.current;
-            // Keep gesture video in sync too
-            if (gestureVideoRef.current) {
-                gestureVideoRef.current.srcObject = streamRef.current;
-                gestureVideoRef.current.play().catch(() => { });
-            }
         }
     }, [step]);
 
-    // Start/stop a lightweight background camera for gesture detection on Review step
-    useEffect(() => {
-        if (step === 'review') {
-            // Start hidden gesture camera
-            navigator.mediaDevices.getUserMedia({
-                video: { width: 320, height: 240, deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
-                audio: false,
-            }).then(stream => {
-                reviewStreamRef.current = stream;
-                if (reviewVideoRef.current) {
-                    reviewVideoRef.current.srcObject = stream;
-                    reviewVideoRef.current.play().catch(() => { });
-                }
-            }).catch(() => { }); // Silently fail — gesture is nice-to-have
-        } else {
-            reviewStreamRef.current?.getTracks().forEach(t => t.stop());
-            reviewStreamRef.current = null;
-        }
-    }, [step, selectedDeviceId]);
+
 
     const stopCamera = () => {
         streamRef.current?.getTracks().forEach(t => t.stop());
@@ -278,14 +242,7 @@ export default function PublicBoothPage() {
         }
     }, []);
 
-    // Callback ref for the always-on hidden gesture video
-    const setGestureVideoRef = useCallback((node: HTMLVideoElement | null) => {
-        gestureVideoRef.current = node;
-        if (node && streamRef.current) {
-            node.srcObject = streamRef.current;
-            node.play().catch(() => { });
-        }
-    }, []);
+
 
     const takePhoto = useCallback(() => {
         if (!videoRef.current || !canvasRef.current || !selectedTemplate) return;
@@ -1103,27 +1060,7 @@ export default function PublicBoothPage() {
 
                             {/* Countdown is rendered as a fixed fullscreen overlay — see below */}
 
-                            {/* Hidden video: always carries the stream for gesture detection */}
-                            <video
-                                ref={setGestureVideoRef}
-                                autoPlay playsInline muted
-                                className="hidden"
-                            />
 
-                            {/* GestureDetector — only when gestures are enabled */}
-                            {boothSettings.gesturesEnabled && (
-                                <GestureDetector
-                                    videoRef={gestureVideoRef}
-                                    mode={captureSubState === 'live' ? 'snap' : captureSubState === 'preview' ? 'preview' : 'off'}
-                                    onRetake={handleRetakeSlot}
-                                    onConfirm={captureSubState === 'live' ? handleSnapSlot : handleKeepSlot}
-                                    onHoldProgress={(progress, target) => {
-                                        setGestureHoldProgress(progress);
-                                        setGestureHoldTarget(target);
-                                    }}
-                                    themeColor={tc}
-                                />
-                            )}
 
                             {/* ── Fullscreen Countdown Overlay (The "Ultimate Zoom") ── */}
                             {countdown !== null && (
@@ -1210,26 +1147,10 @@ export default function PublicBoothPage() {
                                         className="relative flex-1 flex items-center justify-center gap-2.5 py-3 rounded-2xl font-semibold text-white transition-all hover:scale-[1.02] active:scale-95 overflow-hidden"
                                         style={{ background: themeGradient, boxShadow: themeShadow }}
                                     >
-                                        {/* Gesture hold fill overlay */}
-                                        {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm' && (
-                                            <div
-                                                className="absolute inset-0 rounded-2xl bg-white/20"
-                                                style={{ width: `${gestureHoldProgress}%`, transition: 'width 0.05s linear' }}
-                                            />
-                                        )}
                                         <span className="relative text-[10px] font-black uppercase tracking-widest">
-                                            {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm'
-                                                ? `Initializing... ${Math.round(gestureHoldProgress)}%`
-                                                : 'Trigger Capture'}
+                                            Trigger Capture
                                         </span>
                                     </button>
-
-                                    {boothSettings.gesturesEnabled && (
-                                        <div className="shrink-0 flex items-center gap-1 px-3 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest text-white/40"
-                                            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                                            <span>Manual Override</span>
-                                        </div>
-                                    )}
 
                                     {devices.length > 1 && (
                                         <select
@@ -1292,24 +1213,12 @@ export default function PublicBoothPage() {
                                 <div className="w-full flex items-center gap-3">
                                     {/* Retake button */}
                                     <div className="relative overflow-hidden rounded-2xl shrink-0">
-                                        {boothSettings.gesturesEnabled && gestureHoldTarget === 'retake' && (
-                                            <div
-                                                className="absolute inset-y-0 left-0 bg-red-500/30 rounded-2xl"
-                                                style={{ width: `${gestureHoldProgress}%`, transition: 'width 0.05s linear' }}
-                                            />
-                                        )}
                                         <button
                                             id="retake-slot-button"
                                             onClick={handleRetakeSlot}
-                                            className="relative flex items-center gap-2 px-5 py-3 text-sm font-semibold text-white/80 hover:text-white transition-colors"
+                                            className="relative flex items-center gap-2 px-5 py-3 text-sm font-semibold text-white/80 hover:text-white transition-colors border border-white/10 rounded-2xl"
                                             style={{
-                                                background: boothSettings.gesturesEnabled && gestureHoldTarget === 'retake'
-                                                    ? 'rgba(248,113,113,0.15)'
-                                                    : 'rgba(255,255,255,0.06)',
-                                                border: boothSettings.gesturesEnabled && gestureHoldTarget === 'retake'
-                                                    ? '1px solid rgba(248,113,113,0.4)'
-                                                    : '1px solid rgba(255,255,255,0.12)',
-                                                borderRadius: '16px',
+                                                background: 'rgba(255,255,255,0.06)',
                                                 transition: 'all 0.2s',
                                             }}
                                         >
@@ -1329,25 +1238,12 @@ export default function PublicBoothPage() {
                                                 transition: 'width 0.05s linear',
                                             }}
                                         />
-                                        {/* Thumbsup instant-keep overlay */}
-                                        {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm' && (
-                                            <div
-                                                className="absolute inset-y-0 left-0 rounded-2xl"
-                                                style={{
-                                                    width: `${gestureHoldProgress}%`,
-                                                    background: `linear-gradient(90deg, ${tc}80, ${tc})`,
-                                                    transition: 'width 0.05s linear',
-                                                }}
-                                            />
-                                        )}
                                         <div className="absolute inset-0 flex items-center justify-center gap-2">
                                             <span className="text-[10px] font-black uppercase tracking-widest text-white/40">
-                                                {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm' ? 'VERIFIED' : 'READY'}
+                                                READY
                                             </span>
                                             <span className="text-[10px] font-black uppercase tracking-widest text-white/80">
-                                                {boothSettings.gesturesEnabled && gestureHoldTarget === 'confirm'
-                                                    ? `Committing... ${Math.round(gestureHoldProgress)}%`
-                                                    : currentSlotIndex + 1 >= selectedTemplate.slots.length
+                                                {currentSlotIndex + 1 >= selectedTemplate.slots.length
                                                     ? 'Finalize Sequence'
                                                     : 'Continue Protocol'}
                                             </span>
@@ -1546,19 +1442,7 @@ export default function PublicBoothPage() {
                                 </button>
                             </div>
 
-                            {/* Thumbs-up gesture hint */}
-                            <div className="relative w-full flex justify-center mt-1">
-                                {/* Hidden video element for gesture-only camera on review screen */}
-                                <video ref={reviewVideoRef} autoPlay playsInline muted className="hidden" />
 
-                                <GestureDetector
-                                    videoRef={reviewVideoRef}
-                                    mode="confirm"
-                                    onRetake={() => { }}
-                                    onConfirm={handleConfirmAndGenerateQR}
-                                    themeColor={tc}
-                                />
-                            </div>
                         </div>
                     </div>
                 )}
