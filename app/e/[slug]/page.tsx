@@ -9,7 +9,7 @@ import QRCode from 'react-qr-code';
 import { GestureDetector, GestureMode } from '@/components/camera/GestureDetector';
 import { 
     FlipHorizontal, Video, ZoomIn, ZoomOut, 
-    RotateCcw, RotateCw, Plus, X, ArrowUp, ArrowDown, Trash2 
+    RotateCcw, RotateCw, Plus, X, ArrowUp, ArrowDown, Trash2, Printer 
 } from 'lucide-react';
 
 interface Event {
@@ -484,67 +484,96 @@ export default function PublicBoothPage() {
     // ── Generate Composite + Upload + QR ───────────────────────────────
 
     const handleConfirmAndGenerateQR = async () => {
-        if (!selectedTemplate || !event) return;
+        const url = await generateAndSaveComposite();
+        if (url) {
+            setDownloadUrl(url);
+            setStep('qr');
+        }
+    };
+
+    const handlePrintAndSave = async () => {
+        const compositeDataUrl = await generateComposite();
+        if (!compositeDataUrl) return;
+
+        // Print first (better UX, doesn't wait for upload)
+        executePrint(compositeDataUrl);
+
+        // Then save/upload for QR
+        const url = await generateAndSaveComposite(compositeDataUrl);
+        if (url) {
+            setDownloadUrl(url);
+            setStep('qr');
+        }
+    };
+
+    const generateAndSaveComposite = async (existingDataUrl?: string) => {
+        if (!selectedTemplate || !event) return null;
         setUploadingComposite(true);
 
         try {
-            const compositeDataUrl = await generateComposite();
+            const compositeDataUrl = existingDataUrl || await generateComposite();
             if (!compositeDataUrl) throw new Error('Failed to generate composite');
 
-            // Convert data URL → Blob
             const res = await fetch(compositeDataUrl);
             const blob = await res.blob();
-
             const fileName = `${event.slug}/${Date.now()}.jpg`;
 
-            // Upload to Supabase Storage
             const { error: uploadError } = await supabase.storage
                 .from('booth-photos')
                 .upload(fileName, blob, { contentType: 'image/jpeg', upsert: false });
 
             if (uploadError) {
                 console.error('Upload error:', uploadError);
-                // Fallback: use data URL directly
                 handleFallbackDownload(compositeDataUrl);
-                return;
+                return null;
             }
 
-            // Get public URL
-            const { data: urlData } = supabase.storage
-                .from('booth-photos')
-                .getPublicUrl(fileName);
-
+            const { data: urlData } = supabase.storage.from('booth-photos').getPublicUrl(fileName);
             const publicUrl = urlData.publicUrl;
 
-            // Insert record into photos table
             const { data: photoRecord, error: insertError } = await supabase
                 .from('photos')
-                .insert({
-                    event_id: event.id,
-                    storage_path: fileName,
-                    image_url: publicUrl,
-                })
-                .select('id')
-                .single();
+                .insert({ event_id: event.id, storage_path: fileName, image_url: publicUrl })
+                .select('id').single();
 
             if (insertError) {
                 console.error('Insert error:', insertError);
                 handleFallbackDownload(compositeDataUrl);
-                return;
+                return null;
             }
 
-            // Build download page URL
-            const baseUrl = window.location.origin;
-            setDownloadUrl(`${baseUrl}/download/${photoRecord.id}`);
-            setStep('qr');
+            return `${window.location.origin}/download/${photoRecord.id}`;
         } catch (err) {
-            console.error('Error generating QR:', err);
-            // Fallback: just download locally
-            const compositeDataUrl = await generateComposite();
-            if (compositeDataUrl) handleFallbackDownload(compositeDataUrl);
+            console.error('Error in generateAndSaveComposite:', err);
+            return null;
         } finally {
             setUploadingComposite(false);
         }
+    };
+
+    const executePrint = (url: string) => {
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) return;
+        printWindow.document.write(`
+            <html>
+                <head>
+                    <title>SnapWrap Print</title>
+                    <style>
+                        @page { margin: 0; size: 4in 6in; }
+                        body { 
+                            margin: 0; padding: 0; 
+                            display: flex; align-items: center; justify-content: center; 
+                            height: 6in; width: 4in; background: white; 
+                        }
+                        img { max-width: 100%; max-height: 100%; object-fit: contain; }
+                    </style>
+                </head>
+                <body onload="window.print(); setTimeout(() => window.close(), 1000);">
+                    <img src="${url}" />
+                </body>
+            </html>
+        `);
+        printWindow.document.close();
     };
 
     const handleFallbackDownload = (dataUrl: string) => {
@@ -1501,17 +1530,19 @@ export default function PublicBoothPage() {
                                     id="confirm-qr-button"
                                     onClick={handleConfirmAndGenerateQR}
                                     disabled={uploadingComposite}
-                                    className="px-8 py-3 rounded-xl text-white font-bold shadow-xl hover:shadow-2xl transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="px-8 py-3 rounded-xl text-white font-bold shadow-xl hover:shadow-2xl transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed border border-white/20"
+                                    style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(10px)' }}
+                                >
+                                    {uploadingComposite ? '...' : 'Digital Copy'}
+                                </button>
+                                <button
+                                    onClick={handlePrintAndSave}
+                                    disabled={uploadingComposite}
+                                    className="px-10 py-3 rounded-xl text-white font-black shadow-2xl hover:shadow-indigo-500/40 transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3"
                                     style={{ background: themeGradient, boxShadow: themeShadow }}
                                 >
-                                    {uploadingComposite ? (
-                                        <span className="flex items-center gap-2">
-                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                            Generating QR...
-                                        </span>
-                                    ) : (
-                                        'Verify & Generate'
-                                    )}
+                                    <Printer size={18} />
+                                    <span>Print Souvenir</span>
                                 </button>
                             </div>
 
