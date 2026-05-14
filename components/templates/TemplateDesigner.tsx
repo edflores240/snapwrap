@@ -5,7 +5,7 @@ import {
     X, Save, Palette, Layout, Type, Star, Image as ImageIcon, 
     ChevronLeft, ChevronRight, Plus, Trash2, Maximize, 
     Move, RotateCw, Hash, Grid, Copy, Layers, AlignCenter,
-    FlipHorizontal, ArrowUp, ArrowDown, RotateCcw, Eye, EyeOff
+    FlipHorizontal, ArrowUp, ArrowDown, RotateCcw, Eye, EyeOff, RefreshCcw
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { supabase } from '@/lib/supabase';
@@ -666,6 +666,12 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
         const updated = userPresets.filter((_, i) => i !== index);
         setUserPresets(updated);
         localStorage.setItem('snapwrap_user_presets', JSON.stringify(updated));
+    };
+
+    const rotateCanvas = () => {
+        const next = { ...template, width: template.height, height: template.width };
+        setTemplate(next);
+        pushToHistory(next);
     };
 
     // ── Fetch User Stickers ──
@@ -1378,7 +1384,16 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                     </div>
 
                                     <div className="pt-6 border-t border-white/5 space-y-4">
-                                        <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Canvas Orientation</h3>
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Canvas Orientation</h3>
+                                            <button 
+                                                onClick={rotateCanvas}
+                                                className="p-2 rounded-lg bg-white/5 border border-white/5 text-neutral-400 hover:text-blue-400 hover:bg-blue-500/10 transition-all flex items-center gap-2 text-[7px] font-black uppercase tracking-widest"
+                                                title="Swap Width & Height"
+                                            >
+                                                <RefreshCcw size={12} /> Rotate 90°
+                                            </button>
+                                        </div>
                                         <div className="grid grid-cols-2 gap-2">
                                             {[
                                                 { label: 'Portrait (102mm X 152mm)', w: 420, h: 630 },

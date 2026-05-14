@@ -38,8 +38,8 @@ interface PaperSize { name: string; width: number; height: number; }
 /* ─── Constants ─────────────────────────────────────────────────────────── */
 
 const PAPER_SIZES: PaperSize[] = [
-    { name: '4x6 Inch', width: 101.6, height: 152.4 },
-    { name: '5x7 Inch', width: 127, height: 177.8 },
+    { name: '102mm x 152mm', width: 101.6, height: 152.4 },
+    { name: '127mm x 178mm', width: 127, height: 177.8 },
     { name: 'A4', width: 210, height: 297 },
     { name: 'Letter', width: 215.9, height: 279.4 },
     { name: 'Legal', width: 215.9, height: 355.6 },
@@ -128,6 +128,10 @@ export default function PrintDesigner({
         );
         setPages(newPages);
         return newPages;
+    };
+
+    const rotatePaper = () => {
+        setPaper(prev => ({ ...prev, width: prev.height, height: prev.width }));
     };
 
     const pushToHistory = useCallback((currentPages: Page[]) => {
@@ -701,22 +705,53 @@ export default function PrintDesigner({
 
                     {/* Custom Size Inputs */}
                     {paper.name === 'Custom' && (
-                        <div className="flex items-center gap-2 bg-neutral-900 rounded-full px-3 py-1 border border-blue-500/30 animate-in fade-in slide-in-from-right-4">
-                            <div className="flex items-center gap-1.5">
-                                <span className="text-[8px] font-black text-neutral-500 uppercase tracking-tighter">W</span>
-                                <input type="number" value={paper.width} onChange={e => setPaper({ ...paper, width: +e.target.value })}
-                                    className="w-12 bg-transparent text-[10px] font-black text-white outline-none border-b border-white/10 focus:border-blue-400 text-center"
-                                />
-                                <span className="text-[8px] text-neutral-600">mm</span>
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2 bg-neutral-900 rounded-full px-3 py-1 border border-blue-500/30">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-[8px] font-black text-neutral-500 uppercase tracking-tighter">W</span>
+                                    <input type="number" value={paper.width} onChange={e => {
+                                        const w = +e.target.value;
+                                        setPaper({ ...paper, width: w });
+                                        localStorage.setItem('snapwrap_print_last_w', w.toString());
+                                    }}
+                                        className="w-12 bg-transparent text-[10px] font-black text-white outline-none border-b border-white/10 focus:border-blue-400 text-center"
+                                    />
+                                    <span className="text-[8px] text-neutral-600">mm</span>
+                                </div>
+                                <div className="h-3 w-px bg-white/10 mx-1" />
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-[8px] font-black text-neutral-500 uppercase tracking-tighter">H</span>
+                                    <input type="number" value={paper.height} onChange={e => {
+                                        const h = +e.target.value;
+                                        setPaper({ ...paper, height: h });
+                                        localStorage.setItem('snapwrap_print_last_h', h.toString());
+                                    }}
+                                        className="w-12 bg-transparent text-[10px] font-black text-white outline-none border-b border-white/10 focus:border-blue-400 text-center"
+                                    />
+                                    <span className="text-[8px] text-neutral-600">mm</span>
+                                </div>
                             </div>
-                            <div className="h-3 w-px bg-white/10 mx-1" />
-                            <div className="flex items-center gap-1.5">
-                                <span className="text-[8px] font-black text-neutral-500 uppercase tracking-tighter">H</span>
-                                <input type="number" value={paper.height} onChange={e => setPaper({ ...paper, height: +e.target.value })}
-                                    className="w-12 bg-transparent text-[10px] font-black text-white outline-none border-b border-white/10 focus:border-blue-400 text-center"
-                                />
-                                <span className="text-[8px] text-neutral-600">mm</span>
-                            </div>
+
+                            {localStorage.getItem('snapwrap_print_last_w') && (
+                                <button 
+                                    onClick={() => {
+                                        const w = parseFloat(localStorage.getItem('snapwrap_print_last_w') || '150');
+                                        const h = parseFloat(localStorage.getItem('snapwrap_print_last_h') || '150');
+                                        setPaper({ ...paper, width: w, height: h });
+                                    }}
+                                    className="bg-neutral-900 px-3 py-1.5 rounded-full border border-white/10 text-[8px] font-black text-neutral-400 hover:text-white transition-all uppercase tracking-widest"
+                                >
+                                    Recall: {localStorage.getItem('snapwrap_print_last_w')}x{localStorage.getItem('snapwrap_print_last_h')}
+                                </button>
+                            )}
+                            
+                            <button 
+                                onClick={rotatePaper}
+                                className="p-1.5 bg-neutral-900 rounded-full border border-white/5 text-neutral-400 hover:text-blue-400 transition-all"
+                                title="Rotate Paper 90°"
+                            >
+                                <RefreshCw size={14} />
+                            </button>
                         </div>
                     )}
                     <button onClick={handlePrint}
