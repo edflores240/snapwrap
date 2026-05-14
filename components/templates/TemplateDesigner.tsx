@@ -2113,8 +2113,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                 </div>
                             ))}
 
-                            {/* Floating Layers Container (Overlay) */}
-                            <div className="absolute inset-0 pointer-events-none">
+
                                 {/* Stickers */}
                                 {[...(template.stickers || [])].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((stk) => (
                                     <div
@@ -2227,7 +2226,58 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                         )}
                                     </div>
                                 ))}
-                            </div>
+                            
+                            {/* Text Elements */}
+                            {[...(template.textElements || [])].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((txt) => (
+                                <div
+                                    key={txt.id}
+                                    className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing px-2 py-1 group ${selectedTextId === txt.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''}`}
+                                    style={{
+                                        left: `${txt.x}%`,
+                                        top: `${txt.y}%`,
+                                        transform: `translate(-50%, -50%) rotate(${txt.rotation || 0}deg)`,
+                                        fontSize: txt.fontSize,
+                                        fontFamily: txt.fontFamily,
+                                        color: txt.color,
+                                        fontWeight: txt.fontWeight,
+                                        fontStyle: txt.fontStyle,
+                                        textAlign: txt.textAlign as any,
+                                        letterSpacing: `${txt.letterSpacing}px`,
+                                        textShadow: txt.textShadow,
+                                        opacity: txt.opacity,
+                                        zIndex: (550 + (txt.zIndex || 0)),
+                                    }}
+                                    onMouseDown={(e) => { 
+                                        e.stopPropagation(); 
+                                        setSelectedTextId(txt.id); 
+                                        setSelectedStickerId(null); 
+                                        setSelectedSlotId(null);
+                                        setActiveTab('text');
+                                        startDrag(e, txt.id, txt.x, txt.y); 
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onContextMenu={(e) => openContextMenu(e, txt.id, 'text')}
+                                >
+                                    <span style={{ whiteSpace: 'pre-wrap' }}>{txt.text}</span>
+                                    {selectedTextId === txt.id && (
+                                        <>
+                                            {/* Resize Handle (Font Size) */}
+                                            {['e', 'w'].map(type => (
+                                                <div 
+                                                    key={type}
+                                                    className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[120] cursor-${type}-resize shadow-lg hover:scale-125 transition-transform`}
+                                                    style={{
+                                                        top: '50%',
+                                                        left: type === 'w' ? -6 : 'calc(100% - 6px)',
+                                                        transform: 'translateY(-50%)',
+                                                    }}
+                                                    onMouseDown={(e) => startResize(e, txt.id, type, txt.x, txt.y, txt.fontSize, 0)}
+                                                />
+                                            ))}
+                                        </>
+                                    )}
+                                </div>
+                            ))}
                         </div>
 
                         {/* Shortcuts */}
