@@ -1381,8 +1381,8 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                         <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Canvas Orientation</h3>
                                         <div className="grid grid-cols-2 gap-2">
                                             {[
-                                                { label: 'Portrait (4x6)', w: 420, h: 630 },
-                                                { label: 'Landscape (6x4)', w: 630, h: 420 },
+                                                { label: 'Portrait (102mm X 152mm)', w: 420, h: 630 },
+                                                { label: 'Landscape (152mm X 102mm)', w: 630, h: 420 },
                                                 { label: 'Square (1:1)', w: 600, h: 600 },
                                                 { label: 'Strip (2x6)', w: 210, h: 630 },
                                             ].map((opt) => (
