@@ -53,7 +53,22 @@ function TemplatesPageContent() {
                 .eq('is_active', true);
 
             if (error) throw error;
-            setTemplates(data || []);
+            
+            // Load custom templates from localStorage
+            let customTemplates = [];
+            try {
+                const existingStr = localStorage.getItem('snapwrap_custom_templates');
+                if (existingStr) {
+                    customTemplates = JSON.parse(existingStr).map((t: any) => ({
+                        ...t,
+                        isCustom: true // Mark as custom so preview page knows to use config
+                    }));
+                }
+            } catch (e) {
+                console.error('Error loading custom templates:', e);
+            }
+
+            setTemplates([...customTemplates, ...(data || [])]);
         } catch (error) {
             console.error('Error fetching templates:', error);
         } finally {

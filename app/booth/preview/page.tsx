@@ -60,6 +60,23 @@ function PreviewPageContent() {
 
     const fetchTemplate = async () => {
         try {
+            // First check local storage for custom templates
+            try {
+                const existingStr = localStorage.getItem('snapwrap_custom_templates');
+                if (existingStr) {
+                    const customTemplates = JSON.parse(existingStr);
+                    const customTemplate = customTemplates.find((t: any) => t.id === templateId);
+                    if (customTemplate) {
+                        setTemplate({ ...customTemplate, isCustom: true });
+                        setLoading(false);
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.error('Error checking local storage:', e);
+            }
+
+            // Fallback to database
             const { data, error } = await supabase
                 .from('templates')
                 .select('*')
@@ -228,6 +245,7 @@ function PreviewPageContent() {
                                     <PhotoCompositor
                                         photoDataUrl={capturedImage}
                                         overlayUrl={template.overlay_url}
+                                        templateConfig={template.isCustom ? template : undefined}
                                         onComposed={handleComposed}
                                     />
                                 )}
