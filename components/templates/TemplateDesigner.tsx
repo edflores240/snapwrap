@@ -1411,7 +1411,11 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                     <input 
                                                         type="number" 
                                                         value={template.width}
-                                                        onChange={(e) => update({ width: Math.max(100, +e.target.value) })}
+                                                        onChange={(e) => {
+                                                            const w = Math.max(100, +e.target.value);
+                                                            update({ width: w });
+                                                            localStorage.setItem('snapwrap_last_custom_w', w.toString());
+                                                        }}
                                                         onBlur={() => pushToHistory(template)}
                                                         className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-white outline-none focus:border-blue-500 transition-all"
                                                     />
@@ -1424,7 +1428,11 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                     <input 
                                                         type="number" 
                                                         value={template.height}
-                                                        onChange={(e) => update({ height: Math.max(100, +e.target.value) })}
+                                                        onChange={(e) => {
+                                                            const h = Math.max(100, +e.target.value);
+                                                            update({ height: h });
+                                                            localStorage.setItem('snapwrap_last_custom_h', h.toString());
+                                                        }}
                                                         onBlur={() => pushToHistory(template)}
                                                         className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-white outline-none focus:border-blue-500 transition-all"
                                                     />
@@ -1432,6 +1440,21 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 </div>
                                             </div>
                                         </div>
+                                        {localStorage.getItem('snapwrap_last_custom_w') && (
+                                            <div className="pt-2">
+                                                <button 
+                                                    onClick={() => {
+                                                        const w = parseInt(localStorage.getItem('snapwrap_last_custom_w') || '420');
+                                                        const h = parseInt(localStorage.getItem('snapwrap_last_custom_h') || '630');
+                                                        update({ width: w, height: h });
+                                                        pushToHistory({ ...template, width: w, height: h });
+                                                    }}
+                                                    className="w-full py-2 rounded-lg bg-white/5 border border-white/10 text-[7px] font-black text-neutral-400 uppercase tracking-widest hover:text-white hover:bg-white/10 transition-all"
+                                                >
+                                                    Recall Last Custom: {localStorage.getItem('snapwrap_last_custom_w')}x{localStorage.getItem('snapwrap_last_custom_h')}
+                                                </button>
+                                            </div>
+                                        )}
                                         <div className="pt-4">
                                             <button 
                                                 onClick={saveCustomPreset}
