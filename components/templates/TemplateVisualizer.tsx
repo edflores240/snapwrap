@@ -19,12 +19,15 @@ export interface TemplateVisualizerHandle {
 }
 
 const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualizerProps>(
-    ({ template, capturedPhotos = [], width: displayWidth, hideSlots, showForegroundOnly, showBackgroundOnly }, ref) => {
+    ({ template, capturedPhotos: capturedPhotosProp, width: displayWidth, hideSlots, showForegroundOnly, showBackgroundOnly }, ref) => {
         const stageRef = useRef<any>(null);
         const [bgImg] = useImage(template.backgroundImage || '');
         
+        const capturedPhotos = capturedPhotosProp || [];
+        
         const [stickerImages, setStickerImages] = useState<{id: string, img: HTMLImageElement | null, sticker: any}[]>([]);
         const [photoImages, setPhotoImages] = useState<(HTMLImageElement | null)[]>([]);
+
 
         useEffect(() => {
             if (!template.stickers || template.stickers.length === 0) { setStickerImages([]); return; }
@@ -38,7 +41,10 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
         }, [template.stickers]);
 
         useEffect(() => {
-            if (!capturedPhotos || capturedPhotos.length === 0) { setPhotoImages([]); return; }
+            if (!capturedPhotos || capturedPhotos.length === 0) { 
+                setPhotoImages([]); 
+                return; 
+            }
             Promise.all(capturedPhotos.map(src => new Promise<HTMLImageElement | null>(res => {
                 if (!src) return res(null);
                 const img = new window.Image();
@@ -47,7 +53,7 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                 img.onerror = () => res(null);
                 img.src = src;
             }))).then(setPhotoImages);
-        }, [capturedPhotos]);
+        }, [capturedPhotos.join(',')]); // Use stringified version for stability if array is recreated
 
         const scale = (displayWidth || template.width) / template.width;
         const width = template.width * scale;
@@ -162,8 +168,9 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                 {!showBackgroundOnly && (
                     <Layer>
                         {/* Stickers */}
-                        {(template.stickers || []).map((stk, i) => {
-                            const img = stickerImages[i]?.img;
+                        {[...(template.stickers || [])].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((stk) => {
+                            const imgEntry = stickerImages.find(si => si.id === stk.id);
+                            const img = imgEntry?.img;
                             if (!img) return null;
                             
                             const sw = (stk.width / template.width) * width;
@@ -185,7 +192,7 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                         })}
 
                         {/* Text Elements - Center anchored to match CSS translate(-50%,-50%) */}
-                        {template.textElements.map((txt) => (
+                        {[...template.textElements].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((txt) => (
                             <Text
                                 key={txt.id}
                                 text={txt.text}
@@ -195,14 +202,11 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                 fontFamily={txt.fontFamily}
                                 fill={txt.color}
                                 fontStyle={`${txt.fontStyle} ${txt.fontWeight}`}
-                                align="center"
-                                rotation={txt.rotation}
+                                align={txt.textAlign as any}
+                                letterSpacing={txt.letterSpacing}
                                 opacity={txt.opacity}
-                                shadowBlur={txt.textShadow ? 4 : 0}
-                                shadowColor="rgba(0,0,0,0.5)"
-                                // Perfect centering logic for Konva Text
-                                width={width}
-                                offsetX={width / 2}
+                                rotation={txt.rotation}
+                                offsetX={(txt.fontSize * scale * txt.text.length) / 4} // rough estimate for centering
                                 offsetY={(txt.fontSize * scale) / 2}
                             />
                         ))}

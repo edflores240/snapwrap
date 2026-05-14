@@ -28,6 +28,7 @@ interface Sticker {
     flipX: boolean;
     flipY: boolean;
     opacity: number;
+    zIndex?: number;
 }
 
 interface TextElement {
@@ -45,6 +46,7 @@ interface TextElement {
     textShadow: string;
     opacity: number;
     rotation: number;
+    zIndex?: number;
 }
 
 interface PhotoSlot {
@@ -1606,6 +1608,32 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                     ))}
                                                 </div>
                                             </div>
+
+                                            <div className="pt-4 border-t border-white/5 space-y-4">
+                                                <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Layering</h4>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <button 
+                                                        onClick={() => {
+                                                            const maxZ = Math.max(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
+                                                            updateText(selectedText.id, { zIndex: maxZ + 1 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center gap-2 py-2 rounded-xl bg-neutral-900 border border-white/5 text-[8px] font-black uppercase text-white hover:border-blue-500/50 transition-all"
+                                                    >
+                                                        <ArrowUp size={12} /> Front
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            const minZ = Math.min(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
+                                                            updateText(selectedText.id, { zIndex: minZ - 1 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center gap-2 py-2 rounded-xl bg-neutral-900 border border-white/5 text-[8px] font-black uppercase text-white hover:border-blue-500/50 transition-all"
+                                                    >
+                                                        <ArrowDown size={12} /> Back
+                                                    </button>
+                                                </div>
+                                            </div>
                                         </div>
                                     )}
                                 </section>
@@ -1695,7 +1723,33 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 </div>
                                             )}
 
-                                            {/* Transform */}
+                                            {/* Transform & Layering */}
+                                            <div className="space-y-4">
+                                                <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Layering</h4>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <button 
+                                                        onClick={() => {
+                                                            const maxZ = Math.max(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
+                                                            updateSticker(selectedSticker.id, { zIndex: maxZ + 1 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center gap-2 py-2 rounded-xl bg-neutral-900 border border-white/5 text-[8px] font-black uppercase text-white hover:border-blue-500/50 transition-all"
+                                                    >
+                                                        <ArrowUp size={12} /> Front
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            const minZ = Math.min(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
+                                                            updateSticker(selectedSticker.id, { zIndex: minZ - 1 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center gap-2 py-2 rounded-xl bg-neutral-900 border border-white/5 text-[8px] font-black uppercase text-white hover:border-blue-500/50 transition-all"
+                                                    >
+                                                        <ArrowDown size={12} /> Back
+                                                    </button>
+                                                </div>
+                                            </div>
+
                                             <div className="space-y-4">
                                                 <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Transform</h4>
                                                 <div className="space-y-3">
@@ -1832,7 +1886,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                             {/* Floating Layers Container (Overlay) */}
                             <div className="absolute inset-0 pointer-events-none">
                                 {/* Stickers */}
-                                {(template.stickers || []).map((stk) => (
+                                {[...(template.stickers || [])].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((stk) => (
                                     <div
                                         key={stk.id}
                                         className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing group ${selectedStickerId === stk.id ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent' : ''}`}
@@ -1842,7 +1896,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             width: stk.width,
                                             height: (stk.height || 0) > 0 ? stk.height : 'auto',
                                             transform: `translate(-50%, -50%) rotate(${stk.rotation}deg) scaleX(${stk.flipX ? -1 : 1}) scaleY(${stk.flipY ? -1 : 1})`,
-                                            zIndex: selectedStickerId === stk.id ? 100 : 50,
+                                            zIndex: selectedStickerId === stk.id ? 1000 : (500 + (stk.zIndex || 0)),
                                             opacity: stk.opacity ?? 1,
                                             overflow: (stk.height || 0) > 0 ? 'hidden' : 'visible',
                                         }}
@@ -1887,14 +1941,14 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                 ))}
 
                                 {/* Text Elements */}
-                                {template.textElements.map((txt) => (
+                                {[...(template.textElements || [])].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((txt) => (
                                     <div
                                         key={txt.id}
                                         className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing px-2 py-1 group ${selectedTextId === txt.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''}`}
                                         style={{
                                             left: `${txt.x}%`,
                                             top: `${txt.y}%`,
-                                            transform: `translate(-50%, -50%) rotate(${txt.rotation}deg)`,
+                                            transform: `translate(-50%, -50%) rotate(${txt.rotation || 0}deg)`,
                                             fontSize: txt.fontSize,
                                             fontFamily: txt.fontFamily,
                                             color: txt.color,
