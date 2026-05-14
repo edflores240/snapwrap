@@ -5,7 +5,8 @@ import {
     X, Save, Palette, Layout, Type, Star, Image as ImageIcon, 
     ChevronLeft, ChevronRight, Plus, Trash2, Maximize, 
     Move, RotateCw, Hash, Grid, Copy, Layers, AlignCenter,
-    FlipHorizontal, ArrowUp, ArrowDown, RotateCcw, Eye, EyeOff, RefreshCcw
+    FlipHorizontal, ArrowUp, ArrowDown, RotateCcw, Eye, EyeOff, RefreshCcw,
+    ZoomIn, ZoomOut
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { supabase } from '@/lib/supabase';
@@ -636,6 +637,7 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     }, [history, historyIndex]);
 
     const previewRef = useRef<HTMLDivElement>(null);
+    const [workspaceZoom, setWorkspaceZoom] = useState(1);
 
     // ── Custom Presets Management ──
     const [userPresets, setUserPresets] = useState<{name: string, width: number, height: number}[]>([]);
@@ -673,6 +675,41 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
         setTemplate(next);
         pushToHistory(next);
     };
+
+    // ── Keyboard Shortcuts (Undo/Redo/Zoom) ──
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const isCtrl = e.ctrlKey || e.metaKey;
+            
+            // Zoom: Ctrl + / Ctrl -
+            if (isCtrl && (e.key === '=' || e.key === '+')) {
+                e.preventDefault();
+                setWorkspaceZoom(prev => Math.min(3, prev + 0.1));
+            }
+            if (isCtrl && e.key === '-') {
+                e.preventDefault();
+                setWorkspaceZoom(prev => Math.max(0.2, prev - 0.1));
+            }
+            if (isCtrl && e.key === '0') {
+                e.preventDefault();
+                setWorkspaceZoom(1);
+            }
+
+            // Undo: Ctrl + Z
+            if (isCtrl && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                undo();
+            }
+            // Redo: Ctrl + Y or Ctrl + Shift + Z
+            if ((isCtrl && e.key.toLowerCase() === 'y') || (isCtrl && e.shiftKey && e.key.toLowerCase() === 'z')) {
+                e.preventDefault();
+                redo();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [undo, redo]);
 
     // ── Fetch User Stickers ──
     useEffect(() => {
@@ -1216,6 +1253,20 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                     </div>
 
                     <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-4 bg-neutral-900 border border-white/5 rounded-full px-4 py-1.5 mr-4">
+                            <button onClick={() => setWorkspaceZoom(prev => Math.max(0.2, prev - 0.1))} className="text-neutral-500 hover:text-white transition-colors">
+                                <ZoomOut size={16} />
+                            </button>
+                            <div className="w-16 text-center">
+                                <span className="text-[10px] font-black text-white">{Math.round(workspaceZoom * 100)}%</span>
+                            </div>
+                            <button onClick={() => setWorkspaceZoom(prev => Math.min(3, prev + 0.1))} className="text-neutral-500 hover:text-white transition-colors">
+                                <ZoomIn size={16} />
+                            </button>
+                            <div className="w-px h-3 bg-white/10 mx-1" />
+                            <button onClick={() => setWorkspaceZoom(1)} className="text-[8px] font-black text-neutral-500 hover:text-white uppercase tracking-widest">Reset</button>
+                        </div>
+
                         <div className="flex items-center gap-1 bg-neutral-900 border border-white/5 rounded-full p-1 mr-4">
                             <button 
                                 onClick={undo} 
@@ -1987,12 +2038,12 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                         {/* Template Container */}
                         <div 
                             ref={previewRef}
-                            className="relative shadow-2xl transition-all duration-300"
+                            className="relative shadow-2xl transition-all duration-300 ease-out"
                             style={{ 
                                 width: template.width, 
                                 height: template.height, 
-                                maxWidth: '100%',
-                                maxHeight: '80vh',
+                                transform: `scale(${workspaceZoom})`,
+                                transformOrigin: 'center center',
                                 backgroundColor: template.background.includes('gradient') ? undefined : template.background,
                                 backgroundImage: (backgroundImage ? `url(${backgroundImage})` : template.backgroundImage ? `url(${template.backgroundImage})` : 'none') + (template.background.includes('gradient') ? `, ${template.background}` : ''),
                                 backgroundSize: 'cover',
