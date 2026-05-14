@@ -1611,26 +1611,48 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
 
                                             <div className="pt-4 border-t border-white/5 space-y-4">
                                                 <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Layering</h4>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <button 
-                                                        onClick={() => {
-                                                            const maxZ = Math.max(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
-                                                            updateText(selectedText.id, { zIndex: maxZ + 1 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center gap-2 py-2 rounded-xl bg-neutral-900 border border-white/5 text-[8px] font-black uppercase text-white hover:border-blue-500/50 transition-all"
-                                                    >
-                                                        <ArrowUp size={12} /> Front
-                                                    </button>
+                                                <div className="grid grid-cols-4 gap-1.5">
                                                     <button 
                                                         onClick={() => {
                                                             const minZ = Math.min(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
-                                                            updateText(selectedText.id, { zIndex: minZ - 1 });
+                                                            updateText(selectedText.id, { zIndex: minZ - 100 });
                                                             pushToHistory(template);
                                                         }}
-                                                        className="flex items-center justify-center gap-2 py-2 rounded-xl bg-neutral-900 border border-white/5 text-[8px] font-black uppercase text-white hover:border-blue-500/50 transition-all"
+                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
+                                                        title="Send to Back"
                                                     >
-                                                        <ArrowDown size={12} /> Back
+                                                        <ArrowDown size={14} className="translate-y-0.5" /><ArrowDown size={14} className="-translate-y-0.5" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            updateText(selectedText.id, { zIndex: (selectedText.zIndex || 0) - 1 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
+                                                        title="Move Backward"
+                                                    >
+                                                        <ArrowDown size={14} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            updateText(selectedText.id, { zIndex: (selectedText.zIndex || 0) + 1 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
+                                                        title="Move Forward"
+                                                    >
+                                                        <ArrowUp size={14} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            const maxZ = Math.max(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
+                                                            updateText(selectedText.id, { zIndex: maxZ + 100 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
+                                                        title="Bring to Front"
+                                                    >
+                                                        <ArrowUp size={14} className="-translate-y-0.5" /><ArrowUp size={14} className="translate-y-0.5" />
                                                     </button>
                                                 </div>
                                             </div>
@@ -1726,26 +1748,48 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             {/* Transform & Layering */}
                                             <div className="space-y-4">
                                                 <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Layering</h4>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <button 
-                                                        onClick={() => {
-                                                            const maxZ = Math.max(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
-                                                            updateSticker(selectedSticker.id, { zIndex: maxZ + 1 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center gap-2 py-2 rounded-xl bg-neutral-900 border border-white/5 text-[8px] font-black uppercase text-white hover:border-blue-500/50 transition-all"
-                                                    >
-                                                        <ArrowUp size={12} /> Front
-                                                    </button>
+                                                <div className="grid grid-cols-4 gap-1.5">
                                                     <button 
                                                         onClick={() => {
                                                             const minZ = Math.min(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
-                                                            updateSticker(selectedSticker.id, { zIndex: minZ - 1 });
+                                                            updateSticker(selectedSticker.id, { zIndex: minZ - 100 });
                                                             pushToHistory(template);
                                                         }}
-                                                        className="flex items-center justify-center gap-2 py-2 rounded-xl bg-neutral-900 border border-white/5 text-[8px] font-black uppercase text-white hover:border-blue-500/50 transition-all"
+                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
+                                                        title="Send to Back"
                                                     >
-                                                        <ArrowDown size={12} /> Back
+                                                        <ArrowDown size={14} className="translate-y-0.5" /><ArrowDown size={14} className="-translate-y-0.5" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            updateSticker(selectedSticker.id, { zIndex: (selectedSticker.zIndex || 0) - 1 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
+                                                        title="Move Backward"
+                                                    >
+                                                        <ArrowDown size={14} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            updateSticker(selectedSticker.id, { zIndex: (selectedSticker.zIndex || 0) + 1 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
+                                                        title="Move Forward"
+                                                    >
+                                                        <ArrowUp size={14} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            const maxZ = Math.max(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
+                                                            updateSticker(selectedSticker.id, { zIndex: maxZ + 100 });
+                                                            pushToHistory(template);
+                                                        }}
+                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
+                                                        title="Bring to Front"
+                                                    >
+                                                        <ArrowUp size={14} className="-translate-y-0.5" /><ArrowUp size={14} className="translate-y-0.5" />
                                                     </button>
                                                 </div>
                                             </div>
@@ -1815,8 +1859,8 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                 height: template.height, 
                                 maxWidth: '100%',
                                 maxHeight: '80vh',
-                                background: template.background,
-                                backgroundImage: backgroundImage ? `url(${backgroundImage})` : template.backgroundImage ? `url(${template.backgroundImage})` : 'none',
+                                backgroundColor: template.background.includes('gradient') ? undefined : template.background,
+                                backgroundImage: (backgroundImage ? `url(${backgroundImage})` : template.backgroundImage ? `url(${template.backgroundImage})` : 'none') + (template.background.includes('gradient') ? `, ${template.background}` : ''),
                                 backgroundSize: 'cover',
                                 backgroundPosition: 'center',
                                 padding: template.padding,
@@ -1829,7 +1873,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                             {/* Photo Slots (Freeform Layers) */}
                             {template.slots.map((slot) => (
                                 <div key={slot.id} 
-                                    className={`absolute cursor-grab active:cursor-grabbing flex items-center justify-center group border-2 transition-shadow ${selectedSlotId === slot.id ? 'z-50 border-blue-500 shadow-lg shadow-blue-500/20' : 'z-10 border-white/10 hover:border-white/30'}`}
+                                    className={`absolute cursor-grab active:cursor-grabbing flex items-center justify-center group border-2 transition-shadow ${selectedSlotId === slot.id ? 'border-blue-500 shadow-lg shadow-blue-500/20' : 'border-white/10 hover:border-white/30'}`}
                                     style={{ 
                                         left: `${slot.x}%`,
                                         top: `${slot.y}%`,
@@ -1838,6 +1882,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                         transform: `rotate(${slot.rotation || 0}deg)`,
                                         backgroundColor: 'rgba(0,0,0,0.4)',
                                         borderRadius: Math.min(template.borderRadius / 2, 12),
+                                        zIndex: selectedSlotId === slot.id ? 600 : 500,
                                     }}
                                     onMouseDown={(e) => {
                                         setSelectedSlotId(slot.id);
@@ -1896,7 +1941,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             width: stk.width,
                                             height: (stk.height || 0) > 0 ? stk.height : 'auto',
                                             transform: `translate(-50%, -50%) rotate(${stk.rotation}deg) scaleX(${stk.flipX ? -1 : 1}) scaleY(${stk.flipY ? -1 : 1})`,
-                                            zIndex: selectedStickerId === stk.id ? 1000 : (500 + (stk.zIndex || 0)),
+                                            zIndex: selectedStickerId === stk.id ? 1000 : (550 + (stk.zIndex || 0)),
                                             opacity: stk.opacity ?? 1,
                                             overflow: (stk.height || 0) > 0 ? 'hidden' : 'visible',
                                         }}
@@ -1908,6 +1953,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             setActiveTab('stickers');
                                             startDrag(e, stk.id, stk.x, stk.y); 
                                         }}
+                                        onClick={(e) => e.stopPropagation()}
                                         onContextMenu={(e) => openContextMenu(e, stk.id, 'sticker')}
                                     >
                                         <Image 
@@ -1915,6 +1961,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             className={`w-full ${(stk.height || 0) > 0 ? 'h-full object-cover' : 'h-full object-contain'}`}
                                             style={(stk.height || 0) > 0 ? { objectPosition: `${50 + (stk.cropX || 0)}% ${50 + (stk.cropY || 0)}%` } : undefined}
                                             unoptimized 
+                                            draggable={false}
                                         />
                                         <div className="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-neutral-900 px-2 py-1 rounded text-[7px] font-black text-white uppercase tracking-tighter">Layer: Asset</div>
                                         
@@ -1958,7 +2005,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             letterSpacing: `${txt.letterSpacing}px`,
                                             textShadow: txt.textShadow,
                                             opacity: txt.opacity,
-                                            zIndex: selectedTextId === txt.id ? 100 : 50,
+                                            zIndex: selectedTextId === txt.id ? 1000 : (550 + (txt.zIndex || 0)),
                                         }}
                                         onMouseDown={(e) => { 
                                             e.stopPropagation(); 
@@ -1968,6 +2015,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             setActiveTab('text');
                                             startDrag(e, txt.id, txt.x, txt.y); 
                                         }}
+                                        onClick={(e) => e.stopPropagation()}
                                         onContextMenu={(e) => openContextMenu(e, txt.id, 'text')}
                                     >
                                         {txt.text}

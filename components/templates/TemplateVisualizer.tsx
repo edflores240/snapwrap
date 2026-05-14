@@ -63,30 +63,9 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
             getSnapshot: async () => {
                 if (!stageRef.current) return { background: '', foreground: '' };
 
-                // 1. Capture Background
-                // Hide foreground layers
-                const layers = stageRef.current.getLayers();
-                const bgLayer = layers[0];
-                const slotLayer = layers[1];
-                const fgLayer = layers[2];
-
-                fgLayer.hide();
-                slotLayer.hide();
-                bgLayer.show();
-                const background = stageRef.current.toDataURL({ pixelRatio: 2 });
-
-                // 2. Capture Foreground
-                bgLayer.hide();
-                slotLayer.hide();
-                fgLayer.show();
-                const foreground = stageRef.current.toDataURL({ pixelRatio: 2 });
-
-                // Reset visibility
-                bgLayer.show();
-                slotLayer.show();
-                fgLayer.show();
-
-                return { background, foreground };
+                // Capture everything in one shot as we have a unified layer
+                const dataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
+                return { background: dataUrl, foreground: '' };
             }
         }));
 
@@ -97,16 +76,16 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                 ref={stageRef}
                 style={{ borderRadius: `${template.borderRadius * scale}px`, overflow: 'hidden' }}
             >
-                {/* Layer 0: Background */}
-                {!showForegroundOnly && (
+                {!showBackgroundOnly && (
                     <Layer>
-                        {/* Solid Background */}
+                        {/* 1. Background Color */}
                         <Rect
                             width={width}
                             height={height}
                             fill={template.background?.includes('gradient') ? undefined : template.background}
                         />
-                        {/* Background Image */}
+
+                        {/* 2. Background Image (if any) */}
                         {bgImg && (
                             <KonvaImage
                                 image={bgImg}
@@ -115,115 +94,108 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                 listening={false}
                             />
                         )}
-                    </Layer>
-                )}
 
-                {/* Layer 1: Slots (Photos) */}
-                {!showForegroundOnly && !showBackgroundOnly && !hideSlots && (
-                    <Layer>
-                        {template.slots.map((slot, i) => {
-                            const sw = (slot.width / 100) * width;
-                            const sh = (slot.height / 100) * height;
-                            const sx = (slot.x / 100) * width;
-                            const sy = (slot.y / 100) * height;
+                        {/* 3. Unified Content Rendering (Sorted by Z-Index) */}
+                        {(() => {
+                            const items: any[] = [
+                                ...(template.slots || []).map(s => ({ type: 'slot', data: s, zIndex: 500 })),
+                                ...(template.stickers || []).map(s => ({ type: 'sticker', data: s, zIndex: 550 + (s.zIndex || 0) })),
+                                ...(template.textElements || []).map(t => ({ type: 'text', data: t, zIndex: 550 + (t.zIndex || 0) }))
+                            ];
 
-                            return (
-                                <Group 
-                                    key={slot.id} 
-                                    x={sx + sw / 2} 
-                                    y={sy + sh / 2} 
-                                    rotation={slot.rotation}
-                                    offsetX={sw / 2}
-                                    offsetY={sh / 2}
-                                >
-                                    <Rect
-                                        width={sw}
-                                        height={sh}
-                                        fill="#000"
-                                        cornerRadius={template.borderRadius * scale}
-                                        stroke={template.borderColor}
-                                        strokeWidth={template.borderWidth * scale}
-                                    />
-                                    {photoImages[i] && (
+                            return items.sort((a, b) => a.zIndex - b.zIndex).map((item) => {
+                                if (item.type === 'slot' && !showForegroundOnly && !hideSlots) {
+                                    const s = item.data;
+                                    const sw = (s.width / 100) * width;
+                                    const sh = (s.height / 100) * height;
+                                    const i = template.slots.indexOf(s);
+                                    const img = photoImages[i];
+                                    return (
+                                        <Group key={s.id} x={(s.x / 100) * width} y={(s.y / 100) * height} rotation={s.rotation}>
+                                            <Rect
+                                                width={sw}
+                                                height={sh}
+                                                fill="#000"
+                                                cornerRadius={template.borderRadius * scale}
+                                                stroke={template.borderColor}
+                                                strokeWidth={template.borderWidth * scale}
+                                            />
+                                            {img && (
+                                                <KonvaImage
+                                                    image={img as any}
+                                                    width={sw}
+                                                    height={sh}
+                                                    cornerRadius={template.borderRadius * scale}
+                                                    crop={{
+                                                        x: 0,
+                                                        y: 0,
+                                                        width: img.width,
+                                                        height: img.height,
+                                                    }}
+                                                />
+                                            )}
+                                        </Group>
+                                    );
+                                } else if (item.type === 'sticker') {
+                                    const stk = item.data;
+                                    const imgEntry = stickerImages.find(si => si.id === stk.id);
+                                    const img = imgEntry?.img;
+                                    if (!img) return null;
+                                    const sw = (stk.width / template.width) * width;
+                                    const sh = (img.height / img.width) * sw;
+                                    return (
                                         <KonvaImage
-                                            image={photoImages[i] as any}
+                                            key={stk.id}
+                                            image={img}
+                                            x={(stk.x / 100) * width}
+                                            y={(stk.y / 100) * height}
                                             width={sw}
                                             height={sh}
-                                            cornerRadius={template.borderRadius * scale}
-                                            crop={{
-                                                x: 0,
-                                                y: 0,
-                                                width: (photoImages[i] as any).width,
-                                                height: (photoImages[i] as any).height,
-                                            }}
+                                            rotation={stk.rotation}
+                                            offsetX={sw / 2}
+                                            offsetY={sh / 2}
+                                            opacity={stk.opacity ?? 1}
+                                            scaleX={stk.flipX ? -1 : 1}
+                                            scaleY={stk.flipY ? -1 : 1}
                                         />
-                                    )}
-                                </Group>
-                            );
-                        })}
-                    </Layer>
-                )}
+                                    );
+                                } else if (item.type === 'text') {
+                                    const txt = item.data;
+                                    return (
+                                        <Text
+                                            key={txt.id}
+                                            text={txt.text}
+                                            x={(txt.x / 100) * width}
+                                            y={(txt.y / 100) * height}
+                                            fontSize={txt.fontSize * scale}
+                                            fontFamily={txt.fontFamily}
+                                            fill={txt.color}
+                                            fontStyle={`${txt.fontStyle} ${txt.fontWeight}`}
+                                            align={txt.textAlign as any}
+                                            letterSpacing={txt.letterSpacing}
+                                            opacity={txt.opacity}
+                                            rotation={txt.rotation}
+                                            offsetX={(txt.fontSize * scale * txt.text.length) / 4}
+                                            offsetY={(txt.fontSize * scale) / 2}
+                                        />
+                                    );
+                                }
+                                return null;
+                            });
+                        })()}
 
-                {/* Layer 2: Foreground (Stickers, Text, Borders) */}
-                {!showBackgroundOnly && (
-                    <Layer>
-                        {/* Stickers */}
-                        {[...(template.stickers || [])].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((stk) => {
-                            const imgEntry = stickerImages.find(si => si.id === stk.id);
-                            const img = imgEntry?.img;
-                            if (!img) return null;
-                            
-                            const sw = (stk.width / template.width) * width;
-                            const sh = (img.height / img.width) * sw;
-                            
-                            return (
-                                <KonvaImage
-                                    key={stk.id}
-                                    image={img}
-                                    x={(stk.x / 100) * width}
-                                    y={(stk.y / 100) * height}
-                                    width={sw}
-                                    height={sh}
-                                    rotation={stk.rotation}
-                                    offsetX={sw / 2}
-                                    offsetY={sh / 2}
-                                />
-                            );
-                        })}
-
-                        {/* Text Elements - Center anchored to match CSS translate(-50%,-50%) */}
-                        {[...template.textElements].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((txt) => (
-                            <Text
-                                key={txt.id}
-                                text={txt.text}
-                                x={(txt.x / 100) * width}
-                                y={(txt.y / 100) * height}
-                                fontSize={txt.fontSize * scale}
-                                fontFamily={txt.fontFamily}
-                                fill={txt.color}
-                                fontStyle={`${txt.fontStyle} ${txt.fontWeight}`}
-                                align={txt.textAlign as any}
-                                letterSpacing={txt.letterSpacing}
-                                opacity={txt.opacity}
-                                rotation={txt.rotation}
-                                offsetX={(txt.fontSize * scale * txt.text.length) / 4} // rough estimate for centering
-                                offsetY={(txt.fontSize * scale) / 2}
-                            />
-                        ))}
-
-                        {/* Template Border (Capture this in the snapshot!) */}
+                        {/* 4. Global Overlays (Borders, Watermarks) */}
                         {template.borderWidth > 0 && (
                             <Rect
                                 width={width}
                                 height={height}
                                 stroke={template.borderColor}
-                                strokeWidth={template.borderWidth * scale * 2} // Double because it strokes from center
+                                strokeWidth={template.borderWidth * scale * 2}
                                 cornerRadius={template.borderRadius * scale}
                                 listening={false}
                             />
                         )}
 
-                        {/* Watermark */}
                         {template.watermarkText && (
                             <Text
                                 text={template.watermarkText.toUpperCase()}
@@ -234,7 +206,6 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                 align="center"
                                 width={width}
                                 offsetX={width / 2}
-                                letterSpacing={2 * scale}
                             />
                         )}
                     </Layer>
