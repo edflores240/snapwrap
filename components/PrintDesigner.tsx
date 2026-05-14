@@ -695,12 +695,23 @@ export default function PrintDesigner({
                         <button onClick={addPage} className="ml-1 pl-2 border-l border-white/10 text-neutral-400 hover:text-white"><FilePlus size={16} /></button>
                     </div>
                     {/* Paper size */}
-                    <div className="flex bg-neutral-900 rounded-full p-0.5 border border-white/5">
-                        {PAPER_SIZES.map(s => (
-                            <button key={s.name} onClick={() => setPaper(s)}
-                                className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${paper.name === s.name ? 'bg-white text-neutral-900' : 'text-neutral-500 hover:text-white'}`}
-                            >{s.name}</button>
-                        ))}
+                    {/* Paper size dropdown */}
+                    <div className="relative group">
+                        <select 
+                            onChange={(e) => {
+                                const s = PAPER_SIZES.find(sz => sz.name === e.target.value);
+                                if (s) setPaper(s);
+                            }}
+                            value={paper.name}
+                            className="bg-neutral-900 border border-white/5 rounded-full px-5 py-2 text-[10px] font-black text-white uppercase tracking-widest outline-none appearance-none pr-10 focus:border-white/20 transition-all cursor-pointer"
+                        >
+                            {PAPER_SIZES.map(s => (
+                                <option key={s.name} value={s.name}>{s.name}</option>
+                            ))}
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500">
+                            <ChevronRight size={14} className="rotate-90" />
+                        </div>
                     </div>
 
                     {/* Custom Size Inputs */}

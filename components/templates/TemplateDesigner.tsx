@@ -1394,29 +1394,38 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 <RefreshCcw size={12} /> Rotate 90°
                                             </button>
                                         </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            {[
-                                                { label: 'Portrait (102mm X 152mm)', w: 420, h: 630 },
-                                                { label: 'Landscape (152mm X 102mm)', w: 630, h: 420 },
-                                                { label: 'Square (1:1)', w: 600, h: 600 },
-                                                { label: 'Strip (2x6)', w: 210, h: 630 },
-                                            ].map((opt) => (
-                                                <button
-                                                    key={opt.label}
-                                                    onClick={() => {
+                                        <div className="relative group">
+                                            <select 
+                                                onChange={(e) => {
+                                                    const opt = [
+                                                        { label: 'Portrait (102mm X 152mm)', w: 420, h: 630 },
+                                                        { label: 'Landscape (152mm X 102mm)', w: 630, h: 420 },
+                                                        { label: 'Square (1:1)', w: 600, h: 600 },
+                                                        { label: 'Strip (2x6)', w: 210, h: 630 },
+                                                    ].find(o => o.label === e.target.value);
+                                                    if (opt) {
                                                         const next = { ...template, width: opt.w, height: opt.h };
                                                         setTemplate(next);
                                                         pushToHistory(next);
-                                                    }}
-                                                    className={`px-4 py-3 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${
-                                                        template.width === opt.w && template.height === opt.h
-                                                        ? 'bg-blue-600 border-blue-400 text-white shadow-lg'
-                                                        : 'bg-neutral-900 border-white/5 text-neutral-400 hover:border-white/20'
-                                                    }`}
-                                                >
-                                                    {opt.label}
-                                                </button>
-                                            ))}
+                                                    }
+                                                }}
+                                                value={[
+                                                    { label: 'Portrait (102mm X 152mm)', w: 420, h: 630 },
+                                                    { label: 'Landscape (152mm X 102mm)', w: 630, h: 420 },
+                                                    { label: 'Square (1:1)', w: 600, h: 600 },
+                                                    { label: 'Strip (2x6)', w: 210, h: 630 },
+                                                ].find(o => o.w === template.width && o.h === template.height)?.label || 'Custom'}
+                                                className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-[10px] font-black text-white uppercase tracking-widest outline-none appearance-none focus:border-blue-500 transition-all cursor-pointer"
+                                            >
+                                                <option value="Portrait (102mm X 152mm)">Portrait (102mm X 152mm)</option>
+                                                <option value="Landscape (152mm X 102mm)">Landscape (152mm X 102mm)</option>
+                                                <option value="Square (1:1)">Square (1:1)</option>
+                                                <option value="Strip (2x6)">Strip (2x6)</option>
+                                                <option value="Custom" disabled>Manual Dimensions</option>
+                                            </select>
+                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500">
+                                                <ChevronRight size={14} className="rotate-90" />
+                                            </div>
                                         </div>
 
                                         <div className="grid grid-cols-2 gap-3 pt-4 border-t border-white/5">
