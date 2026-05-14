@@ -5,6 +5,8 @@ create extension if not exists "uuid-ossp";
 create table if not exists public.photos (
   id uuid default uuid_generate_v4() primary key,
   storage_path text not null,
+  event_id uuid references public.events(id) on delete cascade,
+  image_url text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 

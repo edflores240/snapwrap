@@ -162,9 +162,9 @@ function PreviewPageContent() {
             const { data: photoData, error: photoError } = await supabase
                 .from('photos')
                 .insert({
-                    final_url: publicUrl,
-                    template_id: templateId,
-                    qr_code_url: `${window.location.origin}/download/${filename}` // Fallback, usually ID based
+                    storage_path: filename,
+                    image_url: publicUrl,
+                    // event_id is null for quick booth photos since they aren't tied to an event
                 })
                 .select()
                 .single();

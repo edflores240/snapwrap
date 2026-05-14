@@ -559,7 +559,7 @@ export default function PublicBoothPage() {
         // Helper to load an image
         const loadImage = (src: string): Promise<HTMLImageElement> => {
             return new Promise((res, rej) => {
-                const img = new Image();
+                const img = new window.Image();
                 img.crossOrigin = 'anonymous';
                 img.onload = () => res(img);
                 img.onerror = rej;
@@ -568,75 +568,190 @@ export default function PublicBoothPage() {
         };
 
         try {
-            // 1. Draw Template Background (Snapshot Protocol)
-            if (selectedTemplate.backgroundSnapshot) {
-                const bg = await loadImage(selectedTemplate.backgroundSnapshot);
-                ctx.drawImage(bg, 0, 0, W, H);
+            // ── 1. Background ────────────────────────────────────────────
+            if (selectedTemplate.backgroundImage) {
+                try {
+                    const bg = await loadImage(selectedTemplate.backgroundImage);
+                    ctx.drawImage(bg, 0, 0, W, H);
+                } catch {
+                    ctx.fillStyle = selectedTemplate.background || '#ffffff';
+                    ctx.fillRect(0, 0, W, H);
+                }
             } else {
                 ctx.fillStyle = selectedTemplate.background || '#ffffff';
                 ctx.fillRect(0, 0, W, H);
             }
 
-            // 2. Draw Photo Slots (Movable)
-            const sortedIndices = photoTransforms.map((_, i) => i).sort((a, b) => (photoTransforms[a].zIndex || 0) - (photoTransforms[b].zIndex || 0));
+            // ── 2. Unified Z-Index Sorted Rendering ──────────────────────
+            // Build a single render list of ALL elements, exactly matching
+            // the TemplateVisualizer's z-index formula:
+            //   - Photo slots:  z = 500
+            //   - Stickers:     z = 550 + sticker.zIndex
+            //   - Text:         z = 550 + text.zIndex
+            // This ensures a sticker with zIndex=-100 (z=450) renders BEHIND
+            // photo slots (z=500), while zIndex=0 (z=550) renders IN FRONT.
 
-            for (const i of sortedIndices) {
-                const transform = photoTransforms[i];
-                const slot = selectedTemplate.slots[i]; // Original slot for aspect ratio
-                const photoSrc = capturedPhotos[i];
-                if (!photoSrc) continue;
-
-                const img = await loadImage(photoSrc);
-                const sw = (transform.width / 100) * W * (transform.scale || 1);
-                const sh = (transform.height / 100) * H * (transform.scale || 1);
-                const sx = (transform.x / 100) * W;
-                const sy = (transform.y / 100) * H;
-
-                ctx.save();
-                ctx.translate(sx + sw / 2, sy + sh / 2);
-                ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
-                
-                // Clip slot area
-                const radius = (selectedTemplate.borderRadius / 4) * SCALE;
-                ctx.beginPath();
-                ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
-                ctx.clip();
-
-                const imgAspect = img.width / img.height;
-                const slotAspect = sw / sh;
-                let drawSW = img.width, drawSH = img.height;
-                let drawSX = 0, drawSY = 0;
-                
-                if (imgAspect > slotAspect) {
-                    drawSW = img.height * slotAspect;
-                    drawSX = (img.width - drawSW) / 2;
-                } else {
-                    drawSH = img.width / slotAspect;
-                    drawSY = (img.height - drawSH) / 2;
-                }
-                
-                ctx.drawImage(img, drawSX, drawSY, drawSW, drawSH, -sw / 2, -sh / 2, sw, sh);
-
-                // 2.1 Draw Slot Border
-                if (selectedTemplate.borderWidth > 0) {
-                    ctx.restore(); // Exit clip
-                    ctx.save();
-                    ctx.translate(sx + sw / 2, sy + sh / 2);
-                    ctx.rotate(((slot.rotation || 0) * Math.PI) / 180);
-                    ctx.strokeStyle = selectedTemplate.borderColor;
-                    ctx.lineWidth = (selectedTemplate.borderWidth / 2) * SCALE;
-                    ctx.beginPath();
-                    ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
-                    ctx.stroke();
-                }
-
-                ctx.restore();
+            interface RenderItem {
+                type: 'slot' | 'sticker' | 'text';
+                zIndex: number;
+                data: any;
+                slotIndex?: number;
             }
 
-            // 3. Draw Foreground Overlay (Snapshot Protocol)
-            if (selectedTemplate.foregroundSnapshot) {
-                const fg = await loadImage(selectedTemplate.foregroundSnapshot);
-                ctx.drawImage(fg, 0, 0, W, H);
+            const renderList: RenderItem[] = [];
+
+            // Add photo slots
+            selectedTemplate.slots.forEach((slot, i) => {
+                renderList.push({ type: 'slot', zIndex: 500, data: slot, slotIndex: i });
+            });
+
+            // Add stickers
+            (selectedTemplate.stickers || []).forEach(sticker => {
+                renderList.push({ type: 'sticker', zIndex: 550 + (sticker.zIndex || 0), data: sticker });
+            });
+
+            // Add text elements
+            (selectedTemplate.textElements || []).forEach(txt => {
+                renderList.push({ type: 'text', zIndex: 550 + (txt.zIndex || 0), data: txt });
+            });
+
+            // Sort by z-index (lowest first = painted first = behind)
+            renderList.sort((a, b) => a.zIndex - b.zIndex);
+
+            // Draw each element in z-order
+            for (const item of renderList) {
+                if (item.type === 'slot') {
+                    const i = item.slotIndex!;
+                    const transform = photoTransforms[i];
+                    if (!transform) continue;
+                    const slot = item.data;
+                    const photoSrc = capturedPhotos[i];
+
+                    const sw = (transform.width / 100) * W * (transform.scale || 1);
+                    const sh = (transform.height / 100) * H * (transform.scale || 1);
+                    const sx = (transform.x / 100) * W;
+                    const sy = (transform.y / 100) * H;
+                    const radius = (selectedTemplate.borderRadius / 4) * SCALE;
+
+                    ctx.save();
+                    ctx.translate(sx + sw / 2, sy + sh / 2);
+                    ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
+
+                    // Draw slot background (black placeholder)
+                    ctx.beginPath();
+                    ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
+                    ctx.fillStyle = '#000000';
+                    ctx.fill();
+
+                    // Draw captured photo if available
+                    if (photoSrc) {
+                        ctx.beginPath();
+                        ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
+                        ctx.clip();
+
+                        const img = await loadImage(photoSrc);
+                        const imgAspect = img.width / img.height;
+                        const slotAspect = sw / sh;
+                        let drawSW = img.width, drawSH = img.height;
+                        let drawSX = 0, drawSY = 0;
+
+                        if (imgAspect > slotAspect) {
+                            drawSW = img.height * slotAspect;
+                            drawSX = (img.width - drawSW) / 2;
+                        } else {
+                            drawSH = img.width / slotAspect;
+                            drawSY = (img.height - drawSH) / 2;
+                        }
+
+                        ctx.drawImage(img, drawSX, drawSY, drawSW, drawSH, -sw / 2, -sh / 2, sw, sh);
+                    }
+
+                    ctx.restore();
+
+                    // Draw slot border (outside clip)
+                    if (selectedTemplate.borderWidth > 0) {
+                        ctx.save();
+                        ctx.translate(sx + sw / 2, sy + sh / 2);
+                        ctx.rotate(((slot.rotation || 0) * Math.PI) / 180);
+                        ctx.strokeStyle = selectedTemplate.borderColor;
+                        ctx.lineWidth = (selectedTemplate.borderWidth / 2) * SCALE;
+                        ctx.beginPath();
+                        ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+
+                } else if (item.type === 'sticker') {
+                    const stk = item.data;
+                    try {
+                        const img = await loadImage(stk.src);
+                        const stkW = (stk.width / selectedTemplate.width) * W;
+                        const stkH = (img.height / img.width) * stkW;
+                        const stkX = (stk.x / 100) * W;
+                        const stkY = (stk.y / 100) * H;
+
+                        ctx.save();
+                        ctx.translate(stkX, stkY);
+                        ctx.rotate(((stk.rotation || 0) * Math.PI) / 180);
+                        ctx.scale(stk.flipX ? -1 : 1, stk.flipY ? -1 : 1);
+                        ctx.globalAlpha = stk.opacity ?? 1;
+                        ctx.drawImage(img, -stkW / 2, -stkH / 2, stkW, stkH);
+                        ctx.restore();
+                    } catch (e) {
+                        console.warn('Failed to load sticker:', stk.src, e);
+                    }
+
+                } else if (item.type === 'text') {
+                    const txt = item.data;
+                    const txtX = (txt.x / 100) * W;
+                    const txtY = (txt.y / 100) * H;
+                    const fontSize = txt.fontSize * SCALE;
+
+                    ctx.save();
+                    ctx.translate(txtX, txtY);
+                    ctx.rotate(((txt.rotation || 0) * Math.PI) / 180);
+                    ctx.globalAlpha = txt.opacity ?? 1;
+                    ctx.font = `${txt.fontStyle || ''} ${txt.fontWeight || ''} ${fontSize}px ${txt.fontFamily || 'sans-serif'}`.trim();
+                    ctx.fillStyle = txt.color || '#000000';
+                    ctx.textAlign = (txt.textAlign as CanvasTextAlign) || 'center';
+                    ctx.textBaseline = 'middle';
+
+                    if (txt.letterSpacing) {
+                        // Manual letter spacing
+                        const chars = txt.text.split('');
+                        let xOffset = 0;
+                        const totalWidth = chars.reduce((acc: number, ch: string) => acc + ctx.measureText(ch).width + (txt.letterSpacing * SCALE), 0);
+                        let startX = txt.textAlign === 'center' ? -totalWidth / 2 : 0;
+                        chars.forEach((ch: string) => {
+                            ctx.fillText(ch, startX + xOffset, 0);
+                            xOffset += ctx.measureText(ch).width + (txt.letterSpacing * SCALE);
+                        });
+                    } else {
+                        ctx.fillText(txt.text, 0, 0);
+                    }
+                    ctx.restore();
+                }
+            }
+
+            // ── 3. Global Overlays ──────────────────────────────────────
+            // Template outer border
+            if (selectedTemplate.borderWidth > 0) {
+                ctx.strokeStyle = selectedTemplate.borderColor;
+                ctx.lineWidth = selectedTemplate.borderWidth * SCALE * 2;
+                const outerRadius = (selectedTemplate.borderRadius) * SCALE;
+                ctx.beginPath();
+                ctx.roundRect(0, 0, W, H, outerRadius);
+                ctx.stroke();
+            }
+
+            // Watermark
+            if (selectedTemplate.watermarkText) {
+                const wmFontSize = 10 * SCALE;
+                ctx.font = `bold ${wmFontSize}px sans-serif`;
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.fillText(selectedTemplate.watermarkText.toUpperCase(), W / 2, H - (10 * SCALE));
             }
 
             return compositeCanvas.toDataURL('image/jpeg', 0.95);
