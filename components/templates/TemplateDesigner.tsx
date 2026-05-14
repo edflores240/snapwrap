@@ -1394,37 +1394,50 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 <RefreshCcw size={12} /> Rotate 90°
                                             </button>
                                         </div>
-                                        <div className="relative group">
-                                            <select 
-                                                onChange={(e) => {
-                                                    const opt = [
-                                                        { label: 'Portrait (102mm X 152mm)', w: 420, h: 630 },
-                                                        { label: 'Landscape (152mm X 102mm)', w: 630, h: 420 },
-                                                        { label: 'Square (1:1)', w: 600, h: 600 },
-                                                        { label: 'Strip (2x6)', w: 210, h: 630 },
-                                                    ].find(o => o.label === e.target.value);
-                                                    if (opt) {
+                                        <div className="flex items-center gap-2">
+                                            {[
+                                                { label: 'Portrait', icon: <div className="w-2.5 h-3.5 border-2 border-current rounded-[1px]" />, w: 420, h: 630 },
+                                                { label: 'Landscape', icon: <div className="w-3.5 h-2.5 border-2 border-current rounded-[1px]" />, w: 630, h: 420 },
+                                            ].map((opt) => (
+                                                <button
+                                                    key={opt.label}
+                                                    onClick={() => {
                                                         const next = { ...template, width: opt.w, height: opt.h };
                                                         setTemplate(next);
                                                         pushToHistory(next);
-                                                    }
-                                                }}
-                                                value={[
-                                                    { label: 'Portrait (102mm X 152mm)', w: 420, h: 630 },
-                                                    { label: 'Landscape (152mm X 102mm)', w: 630, h: 420 },
-                                                    { label: 'Square (1:1)', w: 600, h: 600 },
-                                                    { label: 'Strip (2x6)', w: 210, h: 630 },
-                                                ].find(o => o.w === template.width && o.h === template.height)?.label || 'Custom'}
-                                                className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-[10px] font-black text-white uppercase tracking-widest outline-none appearance-none focus:border-blue-500 transition-all cursor-pointer"
-                                            >
-                                                <option value="Portrait (102mm X 152mm)">Portrait (102mm X 152mm)</option>
-                                                <option value="Landscape (152mm X 102mm)">Landscape (152mm X 102mm)</option>
-                                                <option value="Square (1:1)">Square (1:1)</option>
-                                                <option value="Strip (2x6)">Strip (2x6)</option>
-                                                <option value="Custom" disabled>Manual Dimensions</option>
-                                            </select>
-                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500">
-                                                <ChevronRight size={14} className="rotate-90" />
+                                                    }}
+                                                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border text-[8px] font-black uppercase tracking-widest transition-all ${
+                                                        (template.width === opt.w && template.height === opt.h)
+                                                        ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-500/20'
+                                                        : 'bg-neutral-900 border-white/5 text-neutral-500 hover:border-white/20'
+                                                    }`}
+                                                >
+                                                    {opt.icon}
+                                                    {opt.label}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Base Preset</label>
+                                            <div className="relative group">
+                                                <select 
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        if (val === 'Square') setTemplate({ ...template, width: 600, height: 600 });
+                                                        else if (val === 'Strip') setTemplate({ ...template, width: 210, height: 630 });
+                                                        else if (val === '4x6') setTemplate({ ...template, width: 420, height: 630 });
+                                                    }}
+                                                    value={template.width === 600 ? 'Square' : template.width === 210 ? 'Strip' : '4x6'}
+                                                    className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-[10px] font-black text-white uppercase tracking-widest outline-none appearance-none focus:border-blue-500 transition-all cursor-pointer"
+                                                >
+                                                    <option value="4x6">102mm x 152mm (4x6)</option>
+                                                    <option value="Square">Square (1:1)</option>
+                                                    <option value="Strip">Photo Strip (2x6)</option>
+                                                </select>
+                                                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500">
+                                                    <ChevronRight size={14} className="rotate-90" />
+                                                </div>
                                             </div>
                                         </div>
 

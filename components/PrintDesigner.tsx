@@ -695,6 +695,24 @@ export default function PrintDesigner({
                         <button onClick={addPage} className="ml-1 pl-2 border-l border-white/10 text-neutral-400 hover:text-white"><FilePlus size={16} /></button>
                     </div>
                     {/* Paper size */}
+                    {/* Orientation Toggle */}
+                    <div className="flex bg-neutral-950 rounded-full p-1 border border-white/5">
+                        <button 
+                            onClick={() => setPaper(prev => ({ ...prev, width: Math.min(prev.width, prev.height), height: Math.max(prev.width, prev.height) }))}
+                            className={`p-2 rounded-full transition-all ${paper.width < paper.height ? 'bg-white text-neutral-900' : 'text-neutral-500 hover:text-white'}`}
+                            title="Portrait"
+                        >
+                            <div className="w-3 h-4 border-2 border-current rounded-[1px]" />
+                        </button>
+                        <button 
+                            onClick={() => setPaper(prev => ({ ...prev, width: Math.max(prev.width, prev.height), height: Math.min(prev.width, prev.height) }))}
+                            className={`p-2 rounded-full transition-all ${paper.width > paper.height ? 'bg-white text-neutral-900' : 'text-neutral-500 hover:text-white'}`}
+                            title="Landscape"
+                        >
+                            <div className="w-4 h-3 border-2 border-current rounded-[1px]" />
+                        </button>
+                    </div>
+
                     {/* Paper size dropdown */}
                     <div className="relative group">
                         <select 
