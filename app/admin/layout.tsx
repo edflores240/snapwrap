@@ -20,16 +20,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!pathname.includes('/login')) {
-            checkUser();
-        } else {
-            setLoading(false);
-        }
-    }, [pathname]);
+        // Initial check on mount
+        checkUser();
+
+        // Subscribe to auth changes (like token expiration or logout in another tab)
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_OUT' || !session) {
+                router.push('/admin/login');
+            }
+        });
+
+        return () => subscription.unsubscribe();
+    }, []); // Only run once on mount
 
     const checkUser = async () => {
         const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
+        if (!session && !pathname.includes('/login')) {
             router.push('/admin/login');
         } else {
             setLoading(false);
