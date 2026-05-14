@@ -637,7 +637,38 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
 
     const previewRef = useRef<HTMLDivElement>(null);
 
-    // ── Fetch User Stickers ──────────────────────────────────────────────
+    // ── Custom Presets Management ──
+    const [userPresets, setUserPresets] = useState<{name: string, width: number, height: number}[]>([]);
+
+    useEffect(() => {
+        const saved = localStorage.getItem('snapwrap_user_presets');
+        if (saved) {
+            try {
+                setUserPresets(JSON.parse(saved));
+            } catch (e) {
+                console.error("Failed to load user presets", e);
+            }
+        }
+    }, []);
+
+    const saveCustomPreset = () => {
+        const name = prompt("Enter a name for this custom size:", `${template.width}x${template.height} Custom`);
+        if (!name) return;
+        
+        const newPreset = { name, width: template.width, height: template.height };
+        const updated = [...userPresets, newPreset];
+        setUserPresets(updated);
+        localStorage.setItem('snapwrap_user_presets', JSON.stringify(updated));
+    };
+
+    const deleteCustomPreset = (index: number) => {
+        if (!confirm("Are you sure you want to delete this custom size?")) return;
+        const updated = userPresets.filter((_, i) => i !== index);
+        setUserPresets(updated);
+        localStorage.setItem('snapwrap_user_presets', JSON.stringify(updated));
+    };
+
+    // ── Fetch User Stickers ──
     useEffect(() => {
         const fetchUserStickers = async () => {
             setLoadingStickers(true);
@@ -1277,6 +1308,41 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             </button>
                                         ))}
                                     </div>
+                                    {userPresets.length > 0 && (
+                                        <div className="pt-6 border-t border-white/5 space-y-4">
+                                            <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Your Saved Matrixes</h3>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                {userPresets.map((preset: {name: string, width: number, height: number}, i: number) => (
+                                                    <div key={i} className="group relative">
+                                                        <button
+                                                            onClick={() => {
+                                                                const next = { ...template, width: preset.width, height: preset.height };
+                                                                setTemplate(next);
+                                                                pushToHistory(next);
+                                                            }}
+                                                            className={`w-full relative rounded-xl overflow-hidden border transition-all ${
+                                                                template.width === preset.width && template.height === preset.height
+                                                                ? 'border-blue-500 shadow-2xl shadow-blue-500/20' 
+                                                                : 'border-white/5 hover:border-white/20 bg-white/5'
+                                                            }`}
+                                                            style={{ aspectRatio: `${preset.width} / ${preset.height}` }}
+                                                        >
+                                                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/40 group-hover:bg-neutral-900/20 transition-all p-3">
+                                                                <p className="text-[8px] font-black text-white uppercase truncate text-center">{preset.name}</p>
+                                                                <p className="text-[6px] font-black text-neutral-500 uppercase tracking-widest mt-1">{preset.width}x{preset.height}</p>
+                                                            </div>
+                                                        </button>
+                                                        <button 
+                                                            onClick={(e) => { e.stopPropagation(); deleteCustomPreset(i); }}
+                                                            className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-lg hover:scale-110 z-10"
+                                                        >
+                                                            <Trash2 size={10} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </section>
                             )}
 
@@ -1365,6 +1431,14 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-600 text-[8px] font-black">PX</div>
                                                 </div>
                                             </div>
+                                        </div>
+                                        <div className="pt-4">
+                                            <button 
+                                                onClick={saveCustomPreset}
+                                                className="w-full py-3 rounded-xl bg-blue-600/10 border border-blue-500/30 text-blue-400 text-[9px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center gap-2"
+                                            >
+                                                <Save size={14} /> Bookmark Current Dimensions
+                                            </button>
                                         </div>
                                     </div>
 
