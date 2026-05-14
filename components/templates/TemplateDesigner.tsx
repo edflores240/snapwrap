@@ -2126,7 +2126,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             width: stk.width,
                                             height: (stk.height || 0) > 0 ? stk.height : 'auto',
                                             transform: `translate(-50%, -50%) rotate(${stk.rotation}deg) scaleX(${stk.flipX ? -1 : 1}) scaleY(${stk.flipY ? -1 : 1})`,
-                                            zIndex: (550 + (stk.zIndex || 0)) + (selectedStickerId === stk.id ? 50 : 0),
+                                            zIndex: (550 + (stk.zIndex || 0)),
                                             opacity: stk.opacity ?? 1,
                                             overflow: (stk.height || 0) > 0 ? 'hidden' : 'visible',
                                         }}
@@ -2190,7 +2190,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             letterSpacing: `${txt.letterSpacing}px`,
                                             textShadow: txt.textShadow,
                                             opacity: txt.opacity,
-                                            zIndex: (550 + (txt.zIndex || 0)) + (selectedTextId === txt.id ? 50 : 0),
+                                            zIndex: (550 + (txt.zIndex || 0)),
                                         }}
                                         onMouseDown={(e) => { 
                                             e.stopPropagation(); 
