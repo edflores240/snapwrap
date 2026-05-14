@@ -2067,7 +2067,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                         transform: `rotate(${slot.rotation || 0}deg)`,
                                         backgroundColor: 'rgba(0,0,0,0.4)',
                                         borderRadius: Math.min(template.borderRadius / 2, 12),
-                                        zIndex: selectedSlotId === slot.id ? 600 : 500,
+                                        zIndex: 500,
                                     }}
                                     onMouseDown={(e) => {
                                         setSelectedSlotId(slot.id);
