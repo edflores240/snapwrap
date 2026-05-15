@@ -116,6 +116,21 @@ export default function PublicBoothPage() {
     const [printCompositeUrl, setPrintCompositeUrl] = useState<string | null>(null);
     const [generatingPrint, setGeneratingPrint] = useState(false);
 
+    // Photo filters
+    const [selectedFilter, setSelectedFilter] = useState('none');
+    const FILTERS = [
+        { id: 'none',      label: 'Normal',    css: 'none' },
+        { id: 'vivid',     label: 'Vivid',     css: 'saturate(1.8) contrast(1.1)' },
+        { id: 'warm',      label: 'Warm',      css: 'sepia(0.3) saturate(1.4) brightness(1.05)' },
+        { id: 'cool',      label: 'Cool',      css: 'hue-rotate(20deg) saturate(1.2) brightness(1.05)' },
+        { id: 'grayscale', label: 'B&W',       css: 'grayscale(1)' },
+        { id: 'sepia',     label: 'Sepia',     css: 'sepia(0.8) contrast(1.1)' },
+        { id: 'vintage',   label: 'Vintage',   css: 'sepia(0.4) saturate(0.9) contrast(0.85) brightness(1.1)' },
+        { id: 'fade',      label: 'Fade',      css: 'brightness(1.15) saturate(0.75) contrast(0.85)' },
+        { id: 'noir',      label: 'Noir',      css: 'grayscale(1) contrast(1.4) brightness(0.85)' },
+        { id: 'drama',     label: 'Drama',     css: 'contrast(1.35) saturate(1.3) brightness(0.9)' },
+    ];
+
     // Load Devices
     useEffect(() => {
         const getDevices = async () => {
@@ -254,6 +269,7 @@ export default function PublicBoothPage() {
         if (!videoRef.current || !canvasRef.current || !selectedTemplate) return;
         const video = videoRef.current;
         const canvas = canvasRef.current;
+        const activeFilter = FILTERS.find(f => f.id === selectedFilter)?.css || 'none';
 
         // 1. Calculate the Target Aspect Ratio (from Template Slot Grid)
         // Assuming uniform grid:
@@ -294,10 +310,12 @@ export default function PublicBoothPage() {
         const zx = sx + (sWidth - zWidth) / 2;
         const zy = sy + (sHeight - zHeight) / 2;
 
+        ctx.filter = activeFilter;
         ctx.drawImage(video, zx, zy, zWidth, zHeight, 0, 0, canvas.width, canvas.height);
+        ctx.filter = 'none';
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         return canvas.toDataURL('image/jpeg', 0.95);
-    }, [selectedTemplate, isMirrored, zoom]);
+    }, [selectedTemplate, isMirrored, zoom, selectedFilter]);
 
     // ── Step Handlers ──────────────────────────────────────────────────
 
@@ -1161,7 +1179,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                                             ref={setVideoRef}
                                                             autoPlay playsInline muted
                                                             className="absolute inset-0 w-full h-full object-cover"
-                                                            style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})` }}
+                                                            style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})`, filter: FILTERS.find(f => f.id === selectedFilter)?.css || 'none' }}
                                                         />
                                                     </div>
                                                 )}
@@ -1358,6 +1376,34 @@ const handleFallbackDownload = (dataUrl: string) => {
                                             <Video size={18} className="group-hover:scale-110 transition-transform" />
                                         )}
                                     </button>
+                                </div>
+                            )}
+
+                            {/* Filter Picker Strip */}
+                            {captureSubState === 'live' && (
+                                <div className="w-full max-w-2xl mt-1 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+                                    <div className="flex gap-2 pb-1">
+                                        {FILTERS.map((filter) => (
+                                            <button
+                                                key={filter.id}
+                                                onClick={() => setSelectedFilter(filter.id)}
+                                                className="shrink-0 flex flex-col items-center gap-1.5 px-3 py-2 rounded-xl transition-all"
+                                                style={{
+                                                    background: selectedFilter === filter.id ? `${tc}25` : 'rgba(255,255,255,0.04)',
+                                                    border: selectedFilter === filter.id ? `1px solid ${tc}80` : '1px solid rgba(255,255,255,0.08)',
+                                                }}
+                                            >
+                                                <div
+                                                    className="w-10 h-10 rounded-lg bg-gradient-to-br from-pink-400 via-amber-300 to-sky-400"
+                                                    style={{ filter: filter.css }}
+                                                />
+                                                <span className="text-[8px] font-black uppercase tracking-widest"
+                                                    style={{ color: selectedFilter === filter.id ? tc : 'rgba(255,255,255,0.4)' }}>
+                                                    {filter.label}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
 
