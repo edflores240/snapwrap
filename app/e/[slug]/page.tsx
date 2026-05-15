@@ -562,7 +562,7 @@ const handleFallbackDownload = (dataUrl: string) => {
             // Uses direct zIndex values from the template (same as TemplateVisualizer/TemplateDesigner)
 
             interface RenderItem {
-                type: 'slot' | 'sticker' | 'text';
+                type: 'slot' | 'sticker' | 'text' | 'shape';
                 zIndex: number;
                 data: any;
                 slotIndex?: number;
@@ -583,6 +583,11 @@ const handleFallbackDownload = (dataUrl: string) => {
             // Add text elements
             (selectedTemplate.textElements || []).forEach(txt => {
                 renderList.push({ type: 'text', zIndex: txt.zIndex ?? 0, data: txt });
+            });
+
+            // Add shapes
+            (selectedTemplate.shapes || []).forEach((shp: any) => {
+                renderList.push({ type: 'shape', zIndex: shp.zIndex ?? 0, data: shp });
             });
 
             // Sort by z-index (lowest first = painted first = behind)
@@ -670,6 +675,61 @@ const handleFallbackDownload = (dataUrl: string) => {
                     } catch (e) {
                         console.warn('Failed to load sticker:', stk.src, e);
                     }
+
+                } else if (item.type === 'shape') {
+                    const shp = item.data;
+                    const sx = (shp.x / 100) * W;
+                    const sy = (shp.y / 100) * H;
+                    const sw = (shp.width / 100) * W;
+                    const sh = (shp.height / 100) * H;
+                    ctx.save();
+                    ctx.translate(sx + sw / 2, sy + sh / 2);
+                    ctx.rotate(((shp.rotation || 0) * Math.PI) / 180);
+                    ctx.globalAlpha = shp.opacity ?? 1;
+                    if (shp.shapeType === 'rect') {
+                        ctx.beginPath();
+                        ctx.roundRect(-sw / 2, -sh / 2, sw, sh, (shp.borderRadius || 0) * SCALE);
+                        ctx.fillStyle = shp.fillColor;
+                        ctx.fill();
+                        if (shp.strokeWidth) { ctx.strokeStyle = shp.strokeColor; ctx.lineWidth = shp.strokeWidth * SCALE; ctx.stroke(); }
+                    } else if (shp.shapeType === 'circle') {
+                        ctx.beginPath();
+                        ctx.ellipse(0, 0, sw / 2, sh / 2, 0, 0, Math.PI * 2);
+                        ctx.fillStyle = shp.fillColor;
+                        ctx.fill();
+                        if (shp.strokeWidth) { ctx.strokeStyle = shp.strokeColor; ctx.lineWidth = shp.strokeWidth * SCALE; ctx.stroke(); }
+                    } else if (shp.shapeType === 'triangle') {
+                        ctx.beginPath();
+                        ctx.moveTo(0, -sh / 2);
+                        ctx.lineTo(sw / 2, sh / 2);
+                        ctx.lineTo(-sw / 2, sh / 2);
+                        ctx.closePath();
+                        ctx.fillStyle = shp.fillColor;
+                        ctx.fill();
+                        if (shp.strokeWidth) { ctx.strokeStyle = shp.strokeColor; ctx.lineWidth = shp.strokeWidth * SCALE; ctx.stroke(); }
+                    } else if (shp.shapeType === 'star') {
+                        const outerR = Math.max(sw, sh) / 2;
+                        const innerR = outerR * 0.4;
+                        ctx.beginPath();
+                        for (let pi = 0; pi < 10; pi++) {
+                            const angle = (pi * Math.PI) / 5 - Math.PI / 2;
+                            const r = pi % 2 === 0 ? outerR : innerR;
+                            pi === 0 ? ctx.moveTo(Math.cos(angle) * r, Math.sin(angle) * r) : ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+                        }
+                        ctx.closePath();
+                        ctx.fillStyle = shp.fillColor;
+                        ctx.fill();
+                        if (shp.strokeWidth) { ctx.strokeStyle = shp.strokeColor; ctx.lineWidth = shp.strokeWidth * SCALE; ctx.stroke(); }
+                    } else if (shp.shapeType === 'line') {
+                        ctx.beginPath();
+                        ctx.moveTo(-sw / 2, 0);
+                        ctx.lineTo(sw / 2, 0);
+                        ctx.strokeStyle = shp.strokeColor || shp.fillColor;
+                        ctx.lineWidth = Math.max(2, shp.strokeWidth || 2) * SCALE;
+                        ctx.lineCap = 'round';
+                        ctx.stroke();
+                    }
+                    ctx.restore();
 
                 } else if (item.type === 'text') {
                     const txt = item.data;
@@ -1061,11 +1121,12 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     }}
                                 />
 
-                                {/* Unified sorted render: slots, stickers, text in z-order */}
+                                {/* Unified sorted render: slots, stickers, text, shapes in z-order */}
                                 {[
                                     ...selectedTemplate.slots.map((slot: any, i: number) => ({ type: 'slot' as const, zIndex: slot.zIndex ?? 0, data: slot, slotIndex: i })),
                                     ...(selectedTemplate.stickers || []).map((stk: any) => ({ type: 'sticker' as const, zIndex: stk.zIndex ?? 0, data: stk })),
                                     ...selectedTemplate.textElements.map((el: any) => ({ type: 'text' as const, zIndex: el.zIndex ?? 0, data: el })),
+                                    ...(selectedTemplate.shapes || []).map((shp: any) => ({ type: 'shape' as const, zIndex: shp.zIndex ?? 0, data: shp })),
                                 ].sort((a, b) => a.zIndex - b.zIndex).map((item) => {
                                     if (item.type === 'slot') {
                                         const slot = item.data;
@@ -1128,6 +1189,38 @@ const handleFallbackDownload = (dataUrl: string) => {
                                             </div>
                                         );
                                     }
+                                    if (item.type === 'shape') {
+                                        const shp = item.data;
+                                        const isCircle = shp.shapeType === 'circle';
+                                        const isLine = shp.shapeType === 'line';
+                                        const svgEl = shp.shapeType === 'triangle'
+                                            ? <svg viewBox="0 0 100 87" preserveAspectRatio="none" width="100%" height="100%" style={{display:'block'}}><polygon points="50,0 100,87 0,87" fill={shp.fillColor} stroke={shp.strokeColor} strokeWidth={shp.strokeWidth||0}/></svg>
+                                            : shp.shapeType === 'star'
+                                            ? <svg viewBox="0 0 100 95" preserveAspectRatio="none" width="100%" height="100%" style={{display:'block'}}><polygon points="50,0 61,35 98,35 68,57 79,91 50,70 21,91 32,57 2,35 39,35" fill={shp.fillColor} stroke={shp.strokeColor} strokeWidth={shp.strokeWidth||0}/></svg>
+                                            : null;
+                                        return (
+                                            <div key={shp.id} style={{
+                                                position: 'absolute',
+                                                left: `${shp.x}%`,
+                                                top: `${shp.y}%`,
+                                                width: `${shp.width}%`,
+                                                height: isLine ? 'auto' : `${shp.height}%`,
+                                                transform: `rotate(${shp.rotation||0}deg)`,
+                                                zIndex: item.zIndex,
+                                                opacity: shp.opacity ?? 1,
+                                                pointerEvents: 'none',
+                                                ...(svgEl === null && !isLine ? {
+                                                    background: shp.fillColor,
+                                                    borderRadius: isCircle ? '50%' : shp.borderRadius,
+                                                    border: shp.strokeWidth ? `${shp.strokeWidth}px solid ${shp.strokeColor}` : 'none',
+                                                } : {}),
+                                            }}>
+                                                {svgEl}
+                                                {isLine && <div style={{width:'100%', height: Math.max(2, shp.strokeWidth||2), background: shp.strokeColor||shp.fillColor, borderRadius:9999}}/>}
+                                            </div>
+                                        );
+                                    }
+                                    if (item.type !== 'text') return null;
                                     const el = item.data;
                                     return (
                                         <div key={el.id} style={{
@@ -1418,7 +1511,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                 }}
                             />
 
-                            {/* Unified sorted render: slots (draggable), stickers, text in z-order */}
+                            {/* Unified sorted render: slots (draggable), stickers, text, shapes in z-order */}
                             <div className="absolute inset-0 w-full h-full"
                                  onMouseMove={handleWorkspaceMouseMove}
                                  onMouseUp={handleWorkspaceMouseUp}
@@ -1427,6 +1520,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     ...selectedTemplate.slots.map((slot, i) => ({ type: 'slot' as const, zIndex: slot.zIndex ?? 0, data: slot, slotIndex: i })),
                                     ...(selectedTemplate.stickers || []).map((stk) => ({ type: 'sticker' as const, zIndex: stk.zIndex ?? 0, data: stk })),
                                     ...selectedTemplate.textElements.map((el) => ({ type: 'text' as const, zIndex: el.zIndex ?? 0, data: el })),
+                                    ...(selectedTemplate.shapes || []).map((shp: any) => ({ type: 'shape' as const, zIndex: shp.zIndex ?? 0, data: shp })),
                                 ].sort((a, b) => a.zIndex - b.zIndex).map((item) => {
                                     if (item.type === 'slot') {
                                         const i = item.slotIndex!;
@@ -1473,6 +1567,38 @@ const handleFallbackDownload = (dataUrl: string) => {
                                             </div>
                                         );
                                     }
+                                    if (item.type === 'shape') {
+                                        const shp = item.data;
+                                        const isCircle = shp.shapeType === 'circle';
+                                        const isLine = shp.shapeType === 'line';
+                                        const svgEl = shp.shapeType === 'triangle'
+                                            ? <svg viewBox="0 0 100 87" preserveAspectRatio="none" width="100%" height="100%" style={{display:'block'}}><polygon points="50,0 100,87 0,87" fill={shp.fillColor} stroke={shp.strokeColor} strokeWidth={shp.strokeWidth||0}/></svg>
+                                            : shp.shapeType === 'star'
+                                            ? <svg viewBox="0 0 100 95" preserveAspectRatio="none" width="100%" height="100%" style={{display:'block'}}><polygon points="50,0 61,35 98,35 68,57 79,91 50,70 21,91 32,57 2,35 39,35" fill={shp.fillColor} stroke={shp.strokeColor} strokeWidth={shp.strokeWidth||0}/></svg>
+                                            : null;
+                                        return (
+                                            <div key={shp.id} style={{
+                                                position: 'absolute',
+                                                left: `${shp.x}%`,
+                                                top: `${shp.y}%`,
+                                                width: `${shp.width}%`,
+                                                height: isLine ? 'auto' : `${shp.height}%`,
+                                                transform: `rotate(${shp.rotation||0}deg)`,
+                                                zIndex: item.zIndex,
+                                                opacity: shp.opacity ?? 1,
+                                                pointerEvents: 'none',
+                                                ...(svgEl === null && !isLine ? {
+                                                    background: shp.fillColor,
+                                                    borderRadius: isCircle ? '50%' : shp.borderRadius,
+                                                    border: shp.strokeWidth ? `${shp.strokeWidth}px solid ${shp.strokeColor}` : 'none',
+                                                } : {}),
+                                            }}>
+                                                {svgEl}
+                                                {isLine && <div style={{width:'100%', height: Math.max(2, shp.strokeWidth||2), background: shp.strokeColor||shp.fillColor, borderRadius:9999}}/>}
+                                            </div>
+                                        );
+                                    }
+                                    if (item.type !== 'text') return null;
                                     const el = item.data;
                                     return (
                                         <div key={el.id} style={{
