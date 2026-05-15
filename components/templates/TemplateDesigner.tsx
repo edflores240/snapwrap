@@ -9,6 +9,7 @@ import {
     ZoomIn, ZoomOut, Lock, Unlock,
     AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
     AlignStartVertical, AlignCenterVertical, AlignEndVertical,
+    Square, Circle, Triangle, Star as StarIcon, Minus,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import Image from 'next/image';
@@ -67,6 +68,23 @@ interface PhotoSlot {
     opacity?: number;
 }
 
+export interface ShapeElement {
+    id: string;
+    shapeType: 'rect' | 'circle' | 'triangle' | 'star' | 'line';
+    x: number;   // percent 0-100 (top-left corner, same as slots)
+    y: number;   // percent 0-100
+    width: number;  // percent
+    height: number; // percent
+    rotation: number;
+    fillColor: string;
+    strokeColor: string;
+    strokeWidth: number;  // px
+    borderRadius: number; // px (rect only)
+    opacity: number;
+    zIndex?: number;
+    locked?: boolean;
+}
+
 export interface TemplateConfig {
     id: string;
     name: string;
@@ -85,6 +103,7 @@ export interface TemplateConfig {
     padding: number;
     textElements: TextElement[];
     stickers?: Sticker[];
+    shapes?: ShapeElement[];
     watermarkText: string;
     backgroundSnapshot?: string; // Data URL or URL for flattened background
     foregroundSnapshot?: string; // Data URL or URL for flattened foreground (stickers, text, borders)
@@ -542,7 +561,7 @@ function createBlankTemplate(rows: number, cols: number): Omit<TemplateConfig, '
 
 // ─── Design Tab Panels ──────────────────────────────────────────────────────
 
-type DesignTab = 'presets' | 'layout' | 'style' | 'text' | 'stickers' | 'layers';
+type DesignTab = 'presets' | 'layout' | 'style' | 'text' | 'stickers' | 'shapes' | 'layers';
 
 interface TemplateDesignerProps {
     initialTemplate?: TemplateConfig | null;
@@ -599,6 +618,7 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
     const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+    const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
     const [backgroundImage, setBackgroundImage] = useState<string | null>(initialTemplate?.backgroundImage || null);
     const [userStickers, setUserStickers] = useState<{ id: string; image_url: string }[]>([]);
     const [loadingStickers, setLoadingStickers] = useState(false);
@@ -615,7 +635,7 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
         x: number;
         y: number;
         elementId: string;
-        elementType: 'slot' | 'text' | 'sticker';
+        elementType: 'slot' | 'text' | 'sticker' | 'shape';
     } | null>(null);
 
     // ── History Management ──
@@ -820,18 +840,20 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
             ...template.slots.map(s => s.zIndex ?? 0),
             ...(template.stickers || []).map(s => s.zIndex ?? 0),
             ...template.textElements.map(t => t.zIndex ?? 0),
+            ...(template.shapes || []).map(s => s.zIndex ?? 0),
         ];
         return all.length > 0 ? Math.max(...all) + 1 : 1;
     }, [template]);
 
     const applyPreset = useCallback((preset: Omit<TemplateConfig, 'id'>) => {
-        const next = { id: generateId(), ...preset, stickers: [] } as TemplateConfig;
+        const next = { id: generateId(), ...preset, stickers: [], shapes: [] } as TemplateConfig;
         setTemplate(next);
         setBackgroundImage(preset.backgroundImage || null);
         pushToHistory(next);
         setSelectedTextId(null);
         setSelectedStickerId(null);
         setSelectedSlotId(null);
+        setSelectedShapeId(null);
     }, [pushToHistory]);
 
     const setLayout = useCallback((rows: number, cols: number) => {
@@ -945,42 +967,96 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         updateSticker(id, { x, y });
     }, [updateSticker]);
 
+    // Shape operations
+    const addShape = useCallback((shapeType: ShapeElement['shapeType']) => {
+        const sh: ShapeElement = {
+            id: `shp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            shapeType,
+            x: 30,
+            y: 30,
+            width: 40,
+            height: 25,
+            rotation: 0,
+            fillColor: '#6366f1',
+            strokeColor: '#ffffff',
+            strokeWidth: 0,
+            borderRadius: 0,
+            opacity: 1,
+            zIndex: getNextZIndex(),
+        };
+        setTemplate(prev => {
+            const next = { ...prev, shapes: [...(prev.shapes || []), sh] };
+            pushToHistory(next);
+            return next;
+        });
+        setSelectedShapeId(sh.id);
+        setSelectedTextId(null);
+        setSelectedStickerId(null);
+        setSelectedSlotId(null);
+        setActiveTab('shapes');
+    }, [pushToHistory, getNextZIndex]);
+
+    const updateShape = useCallback((id: string, patch: Partial<ShapeElement>) => {
+        setTemplate(prev => ({
+            ...prev,
+            shapes: (prev.shapes || []).map(s => s.id === id ? { ...s, ...patch } : s),
+        }));
+    }, []);
+
+    const deleteShape = useCallback((id: string) => {
+        setTemplate(prev => {
+            const next = { ...prev, shapes: (prev.shapes || []).filter(s => s.id !== id) };
+            pushToHistory(next);
+            return next;
+        });
+        setSelectedShapeId(null);
+    }, [pushToHistory]);
+
+    const moveShape = useCallback((id: string, x: number, y: number) => {
+        updateShape(id, { x, y });
+    }, [updateShape]);
+
     // Unified drag handler
     const moveElement = useCallback((id: string, x: number, y: number) => {
         if (id.startsWith('stk_')) {
             moveSticker(id, x, y);
         } else if (id.startsWith('txt_')) {
             moveText(id, x, y);
+        } else if (id.startsWith('shp_')) {
+            moveShape(id, x, y);
         } else {
             updateSlot(id, { x, y });
         }
-    }, [moveSticker, moveText, updateSlot]);
+    }, [moveSticker, moveText, moveShape, updateSlot]);
 
     const resizeElement = useCallback((id: string, w: number, h: number, x: number, y: number) => {
         if (id.startsWith('stk_')) {
             updateSticker(id, { width: w * (template.width / 100), x, y });
         } else if (id.startsWith('txt_')) {
             updateText(id, { fontSize: Math.max(8, w * (template.width / 100) / 4), x, y });
+        } else if (id.startsWith('shp_')) {
+            updateShape(id, { width: Math.max(2, w), height: Math.max(2, h), x, y });
         } else {
             updateSlot(id, { width: w, height: h, x, y });
         }
-    }, [updateSticker, updateText, updateSlot, template.width]);
+    }, [updateSticker, updateText, updateShape, updateSlot, template.width]);
 
     const startDrag = useDraggable(previewRef, moveElement, () => pushToHistory(templateRef.current));
     const startResize = useResizable(previewRef, resizeElement, () => pushToHistory(templateRef.current));
 
     // ── Context Menu Handlers ──
-    const openContextMenu = useCallback((e: React.MouseEvent, elementId: string, elementType: 'slot' | 'text' | 'sticker') => {
+    const openContextMenu = useCallback((e: React.MouseEvent, elementId: string, elementType: 'slot' | 'text' | 'sticker' | 'shape') => {
         e.preventDefault();
         e.stopPropagation();
         setContextMenu({ x: e.clientX, y: e.clientY, elementId, elementType });
         // Auto-select the element
-        if (elementType === 'slot') { setSelectedSlotId(elementId); setSelectedTextId(null); setSelectedStickerId(null); }
-        else if (elementType === 'text') { setSelectedTextId(elementId); setSelectedSlotId(null); setSelectedStickerId(null); }
-        else if (elementType === 'sticker') { setSelectedStickerId(elementId); setSelectedSlotId(null); setSelectedTextId(null); }
+        if (elementType === 'slot') { setSelectedSlotId(elementId); setSelectedTextId(null); setSelectedStickerId(null); setSelectedShapeId(null); }
+        else if (elementType === 'text') { setSelectedTextId(elementId); setSelectedSlotId(null); setSelectedStickerId(null); setSelectedShapeId(null); }
+        else if (elementType === 'sticker') { setSelectedStickerId(elementId); setSelectedSlotId(null); setSelectedTextId(null); setSelectedShapeId(null); }
+        else if (elementType === 'shape') { setSelectedShapeId(elementId); setSelectedSlotId(null); setSelectedTextId(null); setSelectedStickerId(null); }
     }, []);
 
-    const duplicateElement = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+    const duplicateElement = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
         if (type === 'slot') {
             const src = template.slots.find(s => s.id === id);
             if (!src) return;
@@ -1000,44 +1076,54 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
             const dup = { ...src, id: `stk_${Date.now()}`, x: Math.min(src.x + 5, 95), y: Math.min(src.y + 5, 95), zIndex: getNextZIndex() };
             setTemplate(prev => { const next = { ...prev, stickers: [...(prev.stickers || []), dup] }; pushToHistory(next); return next; });
             setSelectedStickerId(dup.id);
+        } else if (type === 'shape') {
+            const src = (template.shapes || []).find(s => s.id === id);
+            if (!src) return;
+            const dup = { ...src, id: `shp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, x: Math.min(src.x + 5, 95), y: Math.min(src.y + 5, 95), zIndex: getNextZIndex() };
+            setTemplate(prev => { const next = { ...prev, shapes: [...(prev.shapes || []), dup] }; pushToHistory(next); return next; });
+            setSelectedShapeId(dup.id);
         }
         setContextMenu(null);
     }, [template, pushToHistory, getNextZIndex]);
 
-    const resetElementPosition = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+    const resetElementPosition = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
         setTemplate(prev => {
             let next = { ...prev };
             if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, x: 10, y: 10, rotation: 0 } : s) };
             else if (type === 'text') next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, x: 50, y: 50, rotation: 0 } : t) };
-            else next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, x: 50, y: 50, rotation: 0 } : s) };
+            else if (type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, x: 50, y: 50, rotation: 0 } : s) };
+            else next = { ...next, shapes: (next.shapes || []).map(s => s.id === id ? { ...s, x: 30, y: 30, rotation: 0 } : s) };
             pushToHistory(next);
             return next;
         });
         setContextMenu(null);
     }, [pushToHistory]);
 
-    const resetElementRotation = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+    const resetElementRotation = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
         setTemplate(prev => {
             let next = { ...prev };
             if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, rotation: 0 } : s) };
             else if (type === 'text') next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, rotation: 0 } : t) };
-            else next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, rotation: 0 } : s) };
+            else if (type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, rotation: 0 } : s) };
+            else next = { ...next, shapes: (next.shapes || []).map(s => s.id === id ? { ...s, rotation: 0 } : s) };
             pushToHistory(next);
             return next;
         });
         setContextMenu(null);
     }, [pushToHistory]);
 
-    const bringToFront = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+    const bringToFront = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
         const maxZ = Math.max(
             ...template.slots.map(s => s.zIndex ?? 0),
             ...(template.stickers || []).map(s => s.zIndex ?? 0),
             ...template.textElements.map(t => t.zIndex ?? 0),
+            ...(template.shapes || []).map(s => s.zIndex ?? 0),
         );
         setTemplate(prev => {
             let next = { ...prev };
             if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, zIndex: maxZ + 1 } : s) };
             else if (type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, zIndex: maxZ + 1 } : s) };
+            else if (type === 'shape') next = { ...next, shapes: (next.shapes || []).map(s => s.id === id ? { ...s, zIndex: maxZ + 1 } : s) };
             else next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, zIndex: maxZ + 1 } : t) };
             pushToHistory(next);
             return next;
@@ -1045,16 +1131,18 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         setContextMenu(null);
     }, [template, pushToHistory]);
 
-    const sendToBack = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+    const sendToBack = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
         const minZ = Math.min(
             ...template.slots.map(s => s.zIndex ?? 0),
             ...(template.stickers || []).map(s => s.zIndex ?? 0),
             ...template.textElements.map(t => t.zIndex ?? 0),
+            ...(template.shapes || []).map(s => s.zIndex ?? 0),
         );
         setTemplate(prev => {
             let next = { ...prev };
             if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, zIndex: minZ - 1 } : s) };
             else if (type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, zIndex: minZ - 1 } : s) };
+            else if (type === 'shape') next = { ...next, shapes: (next.shapes || []).map(s => s.id === id ? { ...s, zIndex: minZ - 1 } : s) };
             else next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, zIndex: minZ - 1 } : t) };
             pushToHistory(next);
             return next;
@@ -1062,11 +1150,12 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         setContextMenu(null);
     }, [template, pushToHistory]);
 
-    const moveLayerUp = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+    const moveLayerUp = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
         const allElements = [
             ...template.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
             ...(template.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
             ...template.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
+            ...(template.shapes || []).map(s => ({ id: s.id, type: 'shape' as const, zIndex: s.zIndex ?? 0 })),
         ].sort((a, b) => a.zIndex - b.zIndex);
         const idx = allElements.findIndex(e => e.id === id);
         if (idx < allElements.length - 1) {
@@ -1077,6 +1166,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                 const setZ = (el: typeof current, z: number) => {
                     if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
                     else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
+                    else if (el.type === 'shape') next = { ...next, shapes: (next.shapes || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
                     else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: z } : t) };
                 };
                 setZ(current, above.zIndex);
@@ -1087,11 +1177,12 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         }
     }, [template, pushToHistory]);
 
-    const moveLayerDown = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+    const moveLayerDown = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
         const allElements = [
             ...template.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
             ...(template.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
             ...template.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
+            ...(template.shapes || []).map(s => ({ id: s.id, type: 'shape' as const, zIndex: s.zIndex ?? 0 })),
         ].sort((a, b) => a.zIndex - b.zIndex);
         const idx = allElements.findIndex(e => e.id === id);
         if (idx > 0) {
@@ -1102,6 +1193,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                 const setZ = (el: typeof current, z: number) => {
                     if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
                     else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
+                    else if (el.type === 'shape') next = { ...next, shapes: (next.shapes || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
                     else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: z } : t) };
                 };
                 setZ(current, below.zIndex);
@@ -1118,6 +1210,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
             ...template.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
             ...(template.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
             ...template.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
+            ...(template.shapes || []).map(s => ({ id: s.id, type: 'shape' as const, zIndex: s.zIndex ?? 0 })),
         ].sort((a, b) => b.zIndex - a.zIndex); // desc = front-first panel order
 
         const sourceIdx = sorted.findIndex(e => e.id === sourceId);
@@ -1135,6 +1228,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                 const z = n - 1 - i; // first in panel (front) = highest z
                 if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
                 else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
+                else if (el.type === 'shape') next = { ...next, shapes: (next.shapes || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
                 else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: z } : t) };
             });
             pushToHistory(next);
@@ -1143,7 +1237,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
     }, [template, pushToHistory]);
 
     type AlignOp = 'centerH' | 'centerV' | 'left' | 'right' | 'top' | 'bottom';
-    const alignElement = useCallback((id: string, type: 'slot' | 'text' | 'sticker', op: AlignOp) => {
+    const alignElement = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape', op: AlignOp) => {
         setTemplate(prev => {
             let next = { ...prev };
             if (type === 'slot') {
@@ -1165,12 +1259,24 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                     if (op === 'centerV') return { ...t, y: 50 };
                     return t;
                 })};
-            } else {
+            } else if (type === 'sticker') {
                 next = { ...next, stickers: (next.stickers || []).map(s => {
                     if (s.id !== id) return s;
                     if (op === 'centerH') return { ...s, x: 50 };
                     if (op === 'centerV') return { ...s, y: 50 };
                     return s;
+                })};
+            } else {
+                next = { ...next, shapes: (next.shapes || []).map(s => {
+                    if (s.id !== id) return s;
+                    const updates: Partial<ShapeElement> = {};
+                    if (op === 'centerH') updates.x = 50 - s.width / 2;
+                    else if (op === 'centerV') updates.y = 50 - s.height / 2;
+                    else if (op === 'left') updates.x = 0;
+                    else if (op === 'right') updates.x = 100 - s.width;
+                    else if (op === 'top') updates.y = 0;
+                    else if (op === 'bottom') updates.y = 100 - s.height;
+                    return { ...s, ...updates };
                 })};
             }
             pushToHistory(next);
@@ -1178,23 +1284,25 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         });
     }, [pushToHistory]);
 
-    const toggleLock = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+    const toggleLock = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
         setTemplate(prev => {
             let next = { ...prev };
             if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, locked: !s.locked } : s) };
             else if (type === 'text') next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, locked: !t.locked } : t) };
-            else next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, locked: !s.locked } : s) };
+            else if (type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, locked: !s.locked } : s) };
+            else next = { ...next, shapes: (next.shapes || []).map(s => s.id === id ? { ...s, locked: !s.locked } : s) };
             pushToHistory(next);
             return next;
         });
     }, [pushToHistory]);
 
-    const deleteFromContextMenu = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+    const deleteFromContextMenu = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
         if (type === 'slot') deleteSlot(id);
         else if (type === 'text') deleteTextElement(id);
         else if (type === 'sticker') deleteSticker(id);
+        else if (type === 'shape') deleteShape(id);
         setContextMenu(null);
-    }, [deleteSlot, deleteTextElement, deleteSticker]);
+    }, [deleteSlot, deleteTextElement, deleteSticker, deleteShape]);
 
     // Close context menu on any click
     useEffect(() => {
@@ -1223,12 +1331,13 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                 if (selectedSlotId && !templateRef.current.slots.find(s => s.id === selectedSlotId)?.locked) deleteSlot(selectedSlotId);
                 else if (selectedTextId && !templateRef.current.textElements.find(t => t.id === selectedTextId)?.locked) deleteTextElement(selectedTextId);
                 else if (selectedStickerId && !(templateRef.current.stickers || []).find(s => s.id === selectedStickerId)?.locked) deleteSticker(selectedStickerId);
+                else if (selectedShapeId && !(templateRef.current.shapes || []).find(s => s.id === selectedShapeId)?.locked) deleteShape(selectedShapeId);
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [undo, redo, selectedSlotId, selectedTextId, selectedStickerId, deleteSlot, deleteTextElement, deleteSticker]);
+    }, [undo, redo, selectedSlotId, selectedTextId, selectedStickerId, selectedShapeId, deleteSlot, deleteTextElement, deleteSticker, deleteShape]);
 
     const handleStickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -1328,6 +1437,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         { key: 'style', label: 'Style', icon: Palette },
         { key: 'text', label: 'Text', icon: Type },
         { key: 'stickers', label: 'Stickers', icon: Star },
+        { key: 'shapes', label: 'Shapes', icon: Square },
         { key: 'layers', label: 'Layers', icon: Layers },
     ];
 
@@ -1439,7 +1549,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                     {/* Sidebar */}
                     <aside className="w-80 bg-neutral-950 border-r border-white/5 flex flex-col overflow-hidden">
                         {/* Tab Bar */}
-                        <div className="grid grid-cols-6 gap-1 p-3 bg-white/5 border-b border-white/5">
+                        <div className="grid grid-cols-7 gap-1 p-3 bg-white/5 border-b border-white/5">
                             {tabs.map((t) => (
                                 <button
                                     key={t.key}
@@ -2339,22 +2449,24 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                         }}
                     >
                         {/* Floating Selection Toolbar */}
-                        {(selectedSlotId || selectedTextId || selectedStickerId) && (() => {
-                            const id = selectedSlotId || selectedTextId || selectedStickerId;
-                            const type = selectedSlotId ? 'slot' : selectedTextId ? 'text' : 'sticker';
-                            const typeLabels = { slot: 'Photo Slot', text: 'Text Layer', sticker: 'Sticker' };
-                            const typeColors = { slot: '#3b82f6', text: '#a855f7', sticker: '#f97316' };
+                        {(selectedSlotId || selectedTextId || selectedStickerId || selectedShapeId) && (() => {
+                            const id = selectedSlotId || selectedTextId || selectedStickerId || selectedShapeId;
+                            const type = selectedSlotId ? 'slot' : selectedTextId ? 'text' : selectedStickerId ? 'sticker' : 'shape';
+                            const typeLabels = { slot: 'Photo Slot', text: 'Text Layer', sticker: 'Sticker', shape: 'Shape' };
+                            const typeColors = { slot: '#3b82f6', text: '#a855f7', sticker: '#f97316', shape: '#10b981' };
                             const allElements = [
                                 ...template.slots.map(s => ({ id: s.id, zIndex: s.zIndex ?? 0 })),
                                 ...(template.stickers || []).map(s => ({ id: s.id, zIndex: s.zIndex ?? 0 })),
                                 ...template.textElements.map(t => ({ id: t.id, zIndex: t.zIndex ?? 0 })),
+                                ...(template.shapes || []).map(s => ({ id: s.id, zIndex: s.zIndex ?? 0 })),
                             ].sort((a, b) => a.zIndex - b.zIndex);
                             const pos = allElements.findIndex(e => e.id === id) + 1;
                             const total = allElements.length;
                             const isLocked =
                                 type === 'slot' ? template.slots.find(s => s.id === id)?.locked :
                                 type === 'text' ? template.textElements.find(t => t.id === id)?.locked :
-                                (template.stickers || []).find(s => s.id === id)?.locked;
+                                type === 'sticker' ? (template.stickers || []).find(s => s.id === id)?.locked :
+                                (template.shapes || []).find(s => s.id === id)?.locked;
                             return (
                                 <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-neutral-950/90 backdrop-blur border border-white/10 rounded-full px-3 py-1.5 shadow-xl z-[200]">
                                     <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: typeColors[type] }} />
@@ -2370,7 +2482,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                     <button onClick={() => alignElement(id!, type, 'centerV')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Center Vertically">
                                         <AlignCenterHorizontal size={10} />
                                     </button>
-                                    {type === 'slot' && (<>
+                                    {(type === 'slot' || type === 'shape') && (<>
                                         <button onClick={() => alignElement(id!, type, 'left')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Align Left"><AlignStartVertical size={10} /></button>
                                         <button onClick={() => alignElement(id!, type, 'right')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Align Right"><AlignEndVertical size={10} /></button>
                                         <button onClick={() => alignElement(id!, type, 'top')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Align Top"><AlignStartHorizontal size={10} /></button>
@@ -2398,6 +2510,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             if (selectedSlotId) deleteSlot(selectedSlotId);
                                             else if (selectedTextId) deleteTextElement(selectedTextId);
                                             else if (selectedStickerId) deleteSticker(selectedStickerId);
+                                            else if (selectedShapeId) deleteShape(selectedShapeId);
                                         }}
                                         className={`w-6 h-6 flex items-center justify-center rounded-full transition-all ${isLocked ? 'opacity-20 cursor-not-allowed' : 'hover:bg-red-500/10 text-neutral-400 hover:text-red-400'}`}
                                         title="Delete"
@@ -2433,7 +2546,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                 borderRadius: template.borderRadius,
                                 overflow: 'hidden'
                             }}
-                            onClick={() => { setSelectedTextId(null); setSelectedStickerId(null); setSelectedSlotId(null); }}
+                            onClick={() => { setSelectedTextId(null); setSelectedStickerId(null); setSelectedSlotId(null); setSelectedShapeId(null); }}
                         >
                             {/* Background overlay tint */}
                             {template.backgroundOverlay && (
