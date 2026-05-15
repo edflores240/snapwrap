@@ -59,6 +59,32 @@ function hexToHSL(hex: string): { h: number; s: number; l: number } {
     return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
 }
 
+// Pure function outside component — no trig, just algebra. r₂*cos(θ) = (r₂/r)*nx = factor*nx
+function applyFisheyeToCanvas(canvas: HTMLCanvasElement) {
+    const W = canvas.width, H = canvas.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const src = ctx.getImageData(0, 0, W, H).data;
+    const dst = new Uint8ClampedArray(W * H * 4);
+    const cx = W / 2, cy = H / 2;
+    const k = 0.45;
+    for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            const nx = (x - cx) / cx;
+            const ny = (y - cy) / cy;
+            const r2 = nx * nx + ny * ny;
+            const factor = 1 - k * r2;   // r₂/r; equals (1 - k*r²)
+            const sx = (factor * nx * cx + cx) | 0;
+            const sy = (factor * ny * cy + cy) | 0;
+            if (sx >= 0 && sx < W && sy >= 0 && sy < H) {
+                const di = (y * W + x) * 4, si = (sy * W + sx) * 4;
+                dst[di] = src[si]; dst[di+1] = src[si+1]; dst[di+2] = src[si+2]; dst[di+3] = src[si+3];
+            }
+        }
+    }
+    ctx.putImageData(new ImageData(dst, W, H), 0, 0);
+}
+
 export default function PublicBoothPage() {
     const params = useParams();
     const [event, setEvent] = useState<Event | null>(null);
@@ -118,35 +144,6 @@ export default function PublicBoothPage() {
 
     // Fisheye lens
     const [fisheyeEnabled, setFisheyeEnabled] = useState(false);
-
-    const applyFisheyeToCanvas = (canvas: HTMLCanvasElement) => {
-        const W = canvas.width, H = canvas.height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        const src = ctx.getImageData(0, 0, W, H);
-        const dst = ctx.createImageData(W, H);
-        const cx = W / 2, cy = H / 2;
-        const k = 0.45;
-        for (let y = 0; y < H; y++) {
-            for (let x = 0; x < W; x++) {
-                const nx = (x - cx) / cx;
-                const ny = (y - cy) / cy;
-                const r = Math.sqrt(nx * nx + ny * ny);
-                const theta = Math.atan2(ny, nx);
-                const r2 = r * (1 - k * r * r);
-                const sx = Math.round(r2 * Math.cos(theta) * cx + cx);
-                const sy = Math.round(r2 * Math.sin(theta) * cy + cy);
-                if (sx >= 0 && sx < W && sy >= 0 && sy < H) {
-                    const di = (y * W + x) * 4, si = (sy * W + sx) * 4;
-                    dst.data[di] = src.data[si];
-                    dst.data[di + 1] = src.data[si + 1];
-                    dst.data[di + 2] = src.data[si + 2];
-                    dst.data[di + 3] = src.data[si + 3];
-                }
-            }
-        }
-        ctx.putImageData(dst, 0, 0);
-    };
 
     // Photo filters
     const [selectedFilter, setSelectedFilter] = useState('none');
@@ -348,7 +345,7 @@ export default function PublicBoothPage() {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         if (fisheyeEnabled) applyFisheyeToCanvas(canvas);
         return canvas.toDataURL('image/jpeg', 0.95);
-    }, [selectedTemplate, isMirrored, zoom, selectedFilter, fisheyeEnabled, applyFisheyeToCanvas]);
+    }, [selectedTemplate, isMirrored, zoom, selectedFilter, fisheyeEnabled]);
 
     // ── Step Handlers ──────────────────────────────────────────────────
 
@@ -1222,7 +1219,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                                             autoPlay playsInline muted
                                                             className="absolute inset-0 w-full h-full object-cover"
                                                             style={{
-                                                                transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${fisheyeEnabled ? zoom * 0.82 : zoom})`,
+                                                                transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})`,
                                                                 filter: FILTERS.find(f => f.id === selectedFilter)?.css || 'none',
                                                             }}
                                                         />
