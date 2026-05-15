@@ -2693,6 +2693,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                 ...template.slots.map(s => ({ type: 'slot' as const, data: s, zIndex: s.zIndex ?? 0 })),
                                 ...(template.stickers || []).map(s => ({ type: 'sticker' as const, data: s, zIndex: s.zIndex ?? 0 })),
                                 ...template.textElements.map(t => ({ type: 'text' as const, data: t, zIndex: t.zIndex ?? 0 })),
+                                ...(template.shapes || []).map(s => ({ type: 'shape' as const, data: s, zIndex: s.zIndex ?? 0 })),
                             ].sort((a, b) => a.zIndex - b.zIndex).map((item) => {
                                 if (item.type === 'slot') {
                                     const slot = item.data;
@@ -2812,8 +2813,86 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                     );
                                 }
 
+                                // shape
+                                if (item.type === 'shape') {
+                                    const shp = item.data as ShapeElement;
+                                    const isCircle = shp.shapeType === 'circle';
+                                    const isLine = shp.shapeType === 'line';
+                                    const svgShape = (() => {
+                                        if (shp.shapeType === 'triangle') return (
+                                            <svg viewBox="0 0 100 87" preserveAspectRatio="none" width="100%" height="100%" style={{ display: 'block' }}>
+                                                <polygon points="50,0 100,87 0,87" fill={shp.fillColor} stroke={shp.strokeColor} strokeWidth={shp.strokeWidth || 0} />
+                                            </svg>
+                                        );
+                                        if (shp.shapeType === 'star') return (
+                                            <svg viewBox="0 0 100 95" preserveAspectRatio="none" width="100%" height="100%" style={{ display: 'block' }}>
+                                                <polygon points="50,0 61,35 98,35 68,57 79,91 50,70 21,91 32,57 2,35 39,35" fill={shp.fillColor} stroke={shp.strokeColor} strokeWidth={shp.strokeWidth || 0} />
+                                            </svg>
+                                        );
+                                        if (isLine) return (
+                                            <div style={{ width: '100%', height: Math.max(2, shp.strokeWidth || 2), background: shp.strokeColor || shp.fillColor, borderRadius: 9999 }} />
+                                        );
+                                        return null;
+                                    })();
+                                    return (
+                                        <div
+                                            key={shp.id}
+                                            className={`absolute group ${shp.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedShapeId === shp.id ? 'ring-2 ring-emerald-500 ring-offset-1 ring-offset-transparent' : ''}`}
+                                            style={{
+                                                left: `${shp.x}%`,
+                                                top: `${shp.y}%`,
+                                                width: `${shp.width}%`,
+                                                height: isLine ? 'auto' : `${shp.height}%`,
+                                                transform: `rotate(${shp.rotation || 0}deg)`,
+                                                zIndex: item.zIndex,
+                                                opacity: shp.opacity ?? 1,
+                                                ...(svgShape === null ? {
+                                                    background: shp.fillColor,
+                                                    borderRadius: isCircle ? '50%' : shp.borderRadius,
+                                                    border: shp.strokeWidth ? `${shp.strokeWidth}px solid ${shp.strokeColor}` : 'none',
+                                                } : {}),
+                                            }}
+                                            onMouseDown={shp.locked ? undefined : (e) => {
+                                                e.stopPropagation();
+                                                setSelectedShapeId(shp.id);
+                                                setSelectedTextId(null);
+                                                setSelectedSlotId(null);
+                                                setSelectedStickerId(null);
+                                                setActiveTab('shapes');
+                                                startDrag(e, shp.id, shp.x, shp.y);
+                                            }}
+                                            onClick={(e) => { e.stopPropagation(); setSelectedShapeId(shp.id); setSelectedTextId(null); setSelectedSlotId(null); setSelectedStickerId(null); setActiveTab('shapes'); }}
+                                            onContextMenu={(e) => openContextMenu(e, shp.id, 'shape')}
+                                        >
+                                            {svgShape}
+                                            {shp.locked && <div className="absolute top-0 right-0 text-white/40"><Lock size={10} /></div>}
+                                            {selectedShapeId === shp.id && (
+                                                <>
+                                                    <button onClick={(e) => { e.stopPropagation(); deleteShape(shp.id); }}
+                                                        className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-lg z-[100]">
+                                                        <Trash2 size={12} />
+                                                    </button>
+                                                    {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
+                                                        <div key={type}
+                                                            className={`absolute w-3 h-3 bg-white border-2 border-emerald-500 rounded-full z-[110] cursor-${type}-resize hover:scale-125 transition-transform`}
+                                                            style={{
+                                                                top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
+                                                                left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
+                                                                marginTop: type === 'e' || type === 'w' ? -6 : 0,
+                                                                marginLeft: type === 'n' || type === 's' ? -6 : 0,
+                                                            }}
+                                                            onMouseDown={(e) => startResize(e, shp.id, type, shp.x, shp.y, shp.width, shp.height)}
+                                                        />
+                                                    ))}
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                }
+
                                 // text
-                                const txt = item.data;
+                                if (item.type !== 'text') return null;
+                                const txt = item.data as TextElement;
                                 return (
                                     <div
                                         key={txt.id}
