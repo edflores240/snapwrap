@@ -1150,59 +1150,51 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         setContextMenu(null);
     }, [template, pushToHistory]);
 
-    const moveLayerUp = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
-        const allElements = [
-            ...template.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
-            ...(template.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
-            ...template.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
-            ...(template.shapes || []).map(s => ({ id: s.id, type: 'shape' as const, zIndex: s.zIndex ?? 0 })),
-        ].sort((a, b) => a.zIndex - b.zIndex);
-        const idx = allElements.findIndex(e => e.id === id);
-        if (idx < allElements.length - 1) {
-            const current = allElements[idx];
-            const above = allElements[idx + 1];
-            setTemplate(prev => {
-                let next = { ...prev };
-                const setZ = (el: typeof current, z: number) => {
-                    if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
-                    else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
-                    else if (el.type === 'shape') next = { ...next, shapes: (next.shapes || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
-                    else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: z } : t) };
-                };
-                setZ(current, above.zIndex);
-                setZ(above, current.zIndex);
-                pushToHistory(next);
-                return next;
+    const moveLayerUp = useCallback((id: string, _type: 'slot' | 'text' | 'sticker' | 'shape') => {
+        setTemplate(prev => {
+            const els = [
+                ...prev.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
+                ...(prev.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
+                ...prev.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
+                ...(prev.shapes || []).map(s => ({ id: s.id, type: 'shape' as const, zIndex: s.zIndex ?? 0 })),
+            ].sort((a, b) => a.zIndex - b.zIndex).map((el, i) => ({ ...el, zIndex: i }));
+            const idx = els.findIndex(e => e.id === id);
+            if (idx < 0 || idx >= els.length - 1) return prev;
+            [els[idx].zIndex, els[idx + 1].zIndex] = [els[idx + 1].zIndex, els[idx].zIndex];
+            let next = { ...prev };
+            els.forEach(el => {
+                if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: el.zIndex } : s) };
+                else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: el.zIndex } : s) };
+                else if (el.type === 'shape') next = { ...next, shapes: (next.shapes || []).map(s => s.id === el.id ? { ...s, zIndex: el.zIndex } : s) };
+                else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: el.zIndex } : t) };
             });
-        }
-    }, [template, pushToHistory]);
+            pushToHistory(next);
+            return next;
+        });
+    }, [pushToHistory]);
 
-    const moveLayerDown = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
-        const allElements = [
-            ...template.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
-            ...(template.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
-            ...template.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
-            ...(template.shapes || []).map(s => ({ id: s.id, type: 'shape' as const, zIndex: s.zIndex ?? 0 })),
-        ].sort((a, b) => a.zIndex - b.zIndex);
-        const idx = allElements.findIndex(e => e.id === id);
-        if (idx > 0) {
-            const current = allElements[idx];
-            const below = allElements[idx - 1];
-            setTemplate(prev => {
-                let next = { ...prev };
-                const setZ = (el: typeof current, z: number) => {
-                    if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
-                    else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
-                    else if (el.type === 'shape') next = { ...next, shapes: (next.shapes || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
-                    else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: z } : t) };
-                };
-                setZ(current, below.zIndex);
-                setZ(below, current.zIndex);
-                pushToHistory(next);
-                return next;
+    const moveLayerDown = useCallback((id: string, _type: 'slot' | 'text' | 'sticker' | 'shape') => {
+        setTemplate(prev => {
+            const els = [
+                ...prev.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
+                ...(prev.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
+                ...prev.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
+                ...(prev.shapes || []).map(s => ({ id: s.id, type: 'shape' as const, zIndex: s.zIndex ?? 0 })),
+            ].sort((a, b) => a.zIndex - b.zIndex).map((el, i) => ({ ...el, zIndex: i }));
+            const idx = els.findIndex(e => e.id === id);
+            if (idx <= 0) return prev;
+            [els[idx].zIndex, els[idx - 1].zIndex] = [els[idx - 1].zIndex, els[idx].zIndex];
+            let next = { ...prev };
+            els.forEach(el => {
+                if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: el.zIndex } : s) };
+                else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: el.zIndex } : s) };
+                else if (el.type === 'shape') next = { ...next, shapes: (next.shapes || []).map(s => s.id === el.id ? { ...s, zIndex: el.zIndex } : s) };
+                else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: el.zIndex } : t) };
             });
-        }
-    }, [template, pushToHistory]);
+            pushToHistory(next);
+            return next;
+        });
+    }, [pushToHistory]);
 
     const reorderLayers = useCallback((sourceId: string, targetId: string) => {
         if (sourceId === targetId) return;
