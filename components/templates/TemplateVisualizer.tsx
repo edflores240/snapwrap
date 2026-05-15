@@ -98,9 +98,9 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                         {/* 3. Unified Content Rendering (Sorted by Z-Index) */}
                         {(() => {
                             const items: any[] = [
-                                ...(template.slots || []).map(s => ({ type: 'slot', data: s, zIndex: 500 })),
-                                ...(template.stickers || []).map(s => ({ type: 'sticker', data: s, zIndex: 550 + (s.zIndex || 0) })),
-                                ...(template.textElements || []).map(t => ({ type: 'text', data: t, zIndex: 550 + (t.zIndex || 0) }))
+                                ...(template.slots || []).map(s => ({ type: 'slot', data: s, zIndex: s.zIndex ?? 0 })),
+                                ...(template.stickers || []).map(s => ({ type: 'sticker', data: s, zIndex: s.zIndex ?? 0 })),
+                                ...(template.textElements || []).map(t => ({ type: 'text', data: t, zIndex: t.zIndex ?? 0 }))
                             ];
 
                             return items.sort((a, b) => a.zIndex - b.zIndex).map((item) => {

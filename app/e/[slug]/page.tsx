@@ -583,13 +583,7 @@ export default function PublicBoothPage() {
             }
 
             // ── 2. Unified Z-Index Sorted Rendering ──────────────────────
-            // Build a single render list of ALL elements, exactly matching
-            // the TemplateVisualizer's z-index formula:
-            //   - Photo slots:  z = 500
-            //   - Stickers:     z = 550 + sticker.zIndex
-            //   - Text:         z = 550 + text.zIndex
-            // This ensures a sticker with zIndex=-100 (z=450) renders BEHIND
-            // photo slots (z=500), while zIndex=0 (z=550) renders IN FRONT.
+            // Uses direct zIndex values from the template (same as TemplateVisualizer/TemplateDesigner)
 
             interface RenderItem {
                 type: 'slot' | 'sticker' | 'text';
@@ -602,17 +596,17 @@ export default function PublicBoothPage() {
 
             // Add photo slots
             selectedTemplate.slots.forEach((slot, i) => {
-                renderList.push({ type: 'slot', zIndex: 500, data: slot, slotIndex: i });
+                renderList.push({ type: 'slot', zIndex: slot.zIndex ?? 0, data: slot, slotIndex: i });
             });
 
             // Add stickers
             (selectedTemplate.stickers || []).forEach(sticker => {
-                renderList.push({ type: 'sticker', zIndex: 550 + (sticker.zIndex || 0), data: sticker });
+                renderList.push({ type: 'sticker', zIndex: sticker.zIndex ?? 0, data: sticker });
             });
 
             // Add text elements
             (selectedTemplate.textElements || []).forEach(txt => {
-                renderList.push({ type: 'text', zIndex: 550 + (txt.zIndex || 0), data: txt });
+                renderList.push({ type: 'text', zIndex: txt.zIndex ?? 0, data: txt });
             });
 
             // Sort by z-index (lowest first = painted first = behind)
@@ -1076,102 +1070,107 @@ export default function PublicBoothPage() {
                                     maxWidth: '100%',
                                     borderRadius: `${selectedTemplate.borderRadius}px`,
                                     borderWidth: `${selectedTemplate.borderWidth || 0}px`,
-                                    borderStyle: 'solid'
+                                    borderStyle: 'solid',
+                                    containerType: 'inline-size',
                                 }}
                             >
-                                {/* 1. Template Background */}
-                                {selectedTemplate.backgroundSnapshot ? (
-                                    <img 
-                                        src={selectedTemplate.backgroundSnapshot} 
-                                        className="absolute inset-0 w-full h-full object-cover" 
-                                        alt=""
-                                    />
-                                ) : (
-                                    <div
-                                        className="absolute inset-0 w-full h-full"
-                                        style={{
-                                            background: selectedTemplate.background,
-                                            backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
-                                            backgroundSize: 'cover',
-                                            backgroundPosition: 'center',
-                                        }}
-                                    />
-                                )}
+                                {/* Background */}
+                                <div
+                                    className="absolute inset-0 w-full h-full"
+                                    style={{
+                                        background: selectedTemplate.background,
+                                        backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
+                                        backgroundSize: 'cover',
+                                        backgroundPosition: 'center',
+                                    }}
+                                />
 
-                                {/* Visual Matrix Slots */}
-                                <div className="absolute inset-0 w-full h-full">
-                                    {selectedTemplate.slots.map((slot: any, i: number) => {
+                                {/* Unified sorted render: slots, stickers, text in z-order */}
+                                {[
+                                    ...selectedTemplate.slots.map((slot: any, i: number) => ({ type: 'slot' as const, zIndex: slot.zIndex ?? 0, data: slot, slotIndex: i })),
+                                    ...(selectedTemplate.stickers || []).map((stk: any) => ({ type: 'sticker' as const, zIndex: stk.zIndex ?? 0, data: stk })),
+                                    ...selectedTemplate.textElements.map((el: any) => ({ type: 'text' as const, zIndex: el.zIndex ?? 0, data: el })),
+                                ].sort((a, b) => a.zIndex - b.zIndex).map((item) => {
+                                    if (item.type === 'slot') {
+                                        const slot = item.data;
+                                        const i = item.slotIndex!;
                                         const isCurrent = i === currentSlotIndex;
                                         const showCamera = isCurrent && (captureSubState === 'live' || captureSubState === 'countdown') && !capturedPhotos[i];
-
+                                        return (
+                                            <div
+                                                key={slot.id}
+                                                className="absolute overflow-hidden bg-black/10 transition-all duration-300"
+                                                style={{
+                                                    left: `${slot.x}%`,
+                                                    top: `${slot.y}%`,
+                                                    width: `${slot.width}%`,
+                                                    height: `${slot.height}%`,
+                                                    transform: `rotate(${slot.rotation || 0}deg)`,
+                                                    zIndex: item.zIndex,
+                                                    borderRadius: `${selectedTemplate.borderRadius / 4}px`,
+                                                    border: selectedTemplate.borderWidth > 0 ? `${selectedTemplate.borderWidth / 2}px solid ${selectedTemplate.borderColor}` : 'none',
+                                                    outline: isCurrent && captureSubState === 'preview'
+                                                        ? `3px solid ${tc}`
+                                                        : isCurrent ? `2px solid ${tc}80` : 'none',
+                                                    outlineOffset: '2px',
+                                                }}
+                                            >
+                                                {capturedPhotos[i] && (
+                                                    <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="absolute inset-0 w-full h-full object-cover" />
+                                                )}
+                                                {showCamera && (
+                                                    <div className="absolute inset-0 w-full h-full">
+                                                        <video
+                                                            ref={setVideoRef}
+                                                            autoPlay playsInline muted
+                                                            className="absolute inset-0 w-full h-full object-cover"
+                                                            style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})` }}
+                                                        />
+                                                    </div>
+                                                )}
+                                                {!capturedPhotos[i] && !showCamera && (
+                                                    <div className="absolute inset-0 flex items-center justify-center bg-gray-900/60">
+                                                        <span className="text-gray-600 text-[10px] font-black uppercase tracking-widest">P{i + 1}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    }
+                                    if (item.type === 'sticker') {
+                                        const stk = item.data;
+                                        return (
+                                            <div key={stk.id} style={{
+                                                position: 'absolute',
+                                                left: `${stk.x}%`,
+                                                top: `${stk.y}%`,
+                                                width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
+                                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
+                                                zIndex: item.zIndex,
+                                                pointerEvents: 'none',
+                                            }}>
+                                                <img src={stk.src} className="w-full h-auto drop-shadow-md" />
+                                            </div>
+                                        );
+                                    }
+                                    const el = item.data;
                                     return (
-                                        <div
-                                            key={slot.id}
-                                            className="absolute overflow-hidden bg-black/10 transition-all duration-300"
-                                            style={{
-                                                left: `${slot.x}%`,
-                                                top: `${slot.y}%`,
-                                                width: `${slot.width}%`,
-                                                height: `${slot.height}%`,
-                                                transform: `rotate(${slot.rotation || 0}deg)`,
-                                                borderRadius: `${selectedTemplate.borderRadius / 4}px`,
-                                                border: selectedTemplate.borderWidth > 0 ? `${selectedTemplate.borderWidth / 2}px solid ${selectedTemplate.borderColor}` : 'none',
-                                                outline: isCurrent && captureSubState === 'preview'
-                                                    ? `3px solid ${tc}`
-                                                    : isCurrent ? `2px solid ${tc}80` : 'none',
-                                                outlineOffset: '2px',
-                                            }}
-                                        >
-                                            {capturedPhotos[i] && (
-                                                <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="absolute inset-0 w-full h-full object-cover" />
-                                            )}
-                                            {showCamera && (
-                                                <div className="absolute inset-0 w-full h-full">
-                                                    <video
-                                                        ref={setVideoRef}
-                                                        autoPlay playsInline muted
-                                                        className="absolute inset-0 w-full h-full object-cover"
-                                                        style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})` }}
-                                                    />
-                                                </div>
-                                            )}
-                                            {!capturedPhotos[i] && !showCamera && (
-                                                <div className="absolute inset-0 flex items-center justify-center bg-gray-900/60">
-                                                    <span className="text-gray-600 text-[10px] font-black uppercase tracking-widest">P{i + 1}</span>
-                                                </div>
-                                            )}
-                                        </div>
+                                        <div key={el.id} style={{
+                                            position: 'absolute',
+                                            left: `${el.x}%`,
+                                            top: `${el.y}%`,
+                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
+                                            color: el.color,
+                                            fontSize: `calc(${el.fontSize} / ${selectedTemplate.width} * 100cqw)`,
+                                            fontFamily: el.fontFamily,
+                                            fontWeight: el.fontWeight,
+                                            fontStyle: el.fontStyle,
+                                            width: 'max-content',
+                                            textShadow: el.textShadow,
+                                            zIndex: item.zIndex,
+                                            pointerEvents: 'none',
+                                        }}>{el.text}</div>
                                     );
                                 })}
-                            </div>
-
-                            {/* Text & Stickers overlay */}
-                            {selectedTemplate.foregroundSnapshot ? (
-                                <img 
-                                    src={selectedTemplate.foregroundSnapshot} 
-                                    className="absolute inset-0 w-full h-full pointer-events-none z-20" 
-                                    alt=""
-                                />
-                            ) : (
-                                <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl" style={{ containerType: 'inline-size' }}>
-                                    {selectedTemplate.textElements.map((el: any) => (
-                                        <div key={el.id} style={{
-                                            position: 'absolute', left: `${el.x}%`, top: `${el.y}%`,
-                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                            color: el.color, fontSize: `calc(${el.fontSize} / ${selectedTemplate.width} * 100cqw)`,
-                                            fontFamily: el.fontFamily, fontWeight: el.fontWeight,
-                                            fontStyle: el.fontStyle, width: 'max-content', textShadow: el.textShadow
-                                        }}>{el.text}</div>
-                                    ))}
-                                    {(selectedTemplate.stickers || []).map((stk: any) => (
-                                        <div key={stk.id} style={{
-                                            position: 'absolute', left: `${stk.x}%`, top: `${stk.y}%`,
-                                            width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
-                                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`
-                                        }}><img src={stk.src} className="w-full h-auto drop-shadow-md" /></div>
-                                    ))}
-                                </div>
-                            )}
 
                             {/* Countdown is rendered as a fixed fullscreen overlay — see below */}
 
@@ -1432,69 +1431,78 @@ export default function PublicBoothPage() {
                                 borderStyle: 'solid'
                             }}
                         >
-                            {/* 1. Template Background Layer */}
-                            {selectedTemplate.backgroundSnapshot ? (
-                                <img 
-                                    src={selectedTemplate.backgroundSnapshot} 
-                                    className="absolute inset-0 w-full h-full object-cover" 
-                                    alt=""
-                                />
-                            ) : (
-                                <div
-                                    className="absolute inset-0 w-full h-full"
-                                    style={{
-                                        background: selectedTemplate.background,
-                                        backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
-                                        backgroundSize: 'cover',
-                                        backgroundPosition: 'center',
-                                    }}
-                                />
-                            )}
+                            {/* Background */}
+                            <div
+                                className="absolute inset-0 w-full h-full"
+                                style={{
+                                    background: selectedTemplate.background,
+                                    backgroundImage: selectedTemplate.backgroundImage ? `url(${selectedTemplate.backgroundImage})` : undefined,
+                                    backgroundSize: 'cover',
+                                    backgroundPosition: 'center',
+                                }}
+                            />
 
-                            {/* 2. Slot Matrix (Render Photos - Draggable in Review) */}
-                            <div className="absolute inset-0 w-full h-full" 
+                            {/* Unified sorted render: slots (draggable), stickers, text in z-order */}
+                            <div className="absolute inset-0 w-full h-full"
                                  onMouseMove={handleWorkspaceMouseMove}
                                  onMouseUp={handleWorkspaceMouseUp}
                                  onMouseLeave={handleWorkspaceMouseUp}>
-                                {photoTransforms.map((transform: any, i: number) => (
-                                    <div
-                                        key={i}
-                                        onMouseDown={(e) => startPhotoDrag(e, i)}
-                                        onContextMenu={(e) => handlePhotoContextMenu(e, i)}
-                                        className={`absolute overflow-hidden transition-shadow duration-300 cursor-move ${dragTarget === i ? 'ring-2 ring-white/50 shadow-2xl' : ''}`}
-                                        style={{
-                                            left: `${transform.x}%`,
-                                            top: `${transform.y}%`,
-                                            width: `${transform.width}%`,
-                                            height: `${transform.height}%`,
-                                            transform: `rotate(${transform.rotation || 0}deg) scale(${transform.scale || 1})`,
-                                            zIndex: transform.zIndex || (i + 10),
-                                            borderRadius: `${selectedTemplate.borderRadius / 4}px`,
-                                            border: selectedTemplate.borderWidth > 0 ? `${selectedTemplate.borderWidth / 2}px solid ${selectedTemplate.borderColor}` : 'none',
-                                        }}
-                                    >
-                                        {capturedPhotos[i] ? (
-                                            <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="w-full h-full object-cover pointer-events-none" />
-                                        ) : (
-                                            <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-500">No photo</div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-
-                            {/* 3. Text & Stickers Overlay */}
-                            {selectedTemplate.foregroundSnapshot ? (
-                                <img 
-                                    src={selectedTemplate.foregroundSnapshot} 
-                                    className="absolute inset-0 w-full h-full pointer-events-none z-20" 
-                                    alt=""
-                                />
-                            ) : (
-                                <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl">
-                                    {selectedTemplate.textElements.map((el) => (
+                                {[
+                                    ...selectedTemplate.slots.map((slot, i) => ({ type: 'slot' as const, zIndex: slot.zIndex ?? 0, data: slot, slotIndex: i })),
+                                    ...(selectedTemplate.stickers || []).map((stk) => ({ type: 'sticker' as const, zIndex: stk.zIndex ?? 0, data: stk })),
+                                    ...selectedTemplate.textElements.map((el) => ({ type: 'text' as const, zIndex: el.zIndex ?? 0, data: el })),
+                                ].sort((a, b) => a.zIndex - b.zIndex).map((item) => {
+                                    if (item.type === 'slot') {
+                                        const i = item.slotIndex!;
+                                        const transform = photoTransforms[i];
+                                        if (!transform) return null;
+                                        return (
+                                            <div
+                                                key={item.data.id}
+                                                onMouseDown={(e) => startPhotoDrag(e, i)}
+                                                onContextMenu={(e) => handlePhotoContextMenu(e, i)}
+                                                className={`absolute overflow-hidden transition-shadow duration-300 cursor-move ${dragTarget === i ? 'ring-2 ring-white/50 shadow-2xl' : ''}`}
+                                                style={{
+                                                    left: `${transform.x}%`,
+                                                    top: `${transform.y}%`,
+                                                    width: `${transform.width}%`,
+                                                    height: `${transform.height}%`,
+                                                    transform: `rotate(${transform.rotation || 0}deg) scale(${transform.scale || 1})`,
+                                                    zIndex: item.zIndex,
+                                                    borderRadius: `${selectedTemplate.borderRadius / 4}px`,
+                                                    border: selectedTemplate.borderWidth > 0 ? `${selectedTemplate.borderWidth / 2}px solid ${selectedTemplate.borderColor}` : 'none',
+                                                }}
+                                            >
+                                                {capturedPhotos[i] ? (
+                                                    <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="w-full h-full object-cover pointer-events-none" />
+                                                ) : (
+                                                    <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-500">No photo</div>
+                                                )}
+                                            </div>
+                                        );
+                                    }
+                                    if (item.type === 'sticker') {
+                                        const stk = item.data;
+                                        return (
+                                            <div key={stk.id} style={{
+                                                position: 'absolute',
+                                                left: `${stk.x}%`,
+                                                top: `${stk.y}%`,
+                                                width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
+                                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
+                                                zIndex: item.zIndex,
+                                                pointerEvents: 'none',
+                                            }}>
+                                                <img src={stk.src} className="w-full h-auto drop-shadow-md" />
+                                            </div>
+                                        );
+                                    }
+                                    const el = item.data;
+                                    return (
                                         <div key={el.id} style={{
                                             position: 'absolute',
-                                            left: `${el.x}%`, top: `${el.y}%`,
+                                            left: `${el.x}%`,
+                                            top: `${el.y}%`,
                                             transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
                                             color: el.color,
                                             fontSize: `calc(${el.fontSize} / ${selectedTemplate.width} * 100cqw)`,
@@ -1502,23 +1510,15 @@ export default function PublicBoothPage() {
                                             fontWeight: el.fontWeight,
                                             fontStyle: el.fontStyle,
                                             width: 'max-content',
-                                            textShadow: el.textShadow
+                                            textShadow: el.textShadow,
+                                            zIndex: item.zIndex,
+                                            pointerEvents: 'none',
                                         }}>
                                             {el.text}
                                         </div>
-                                    ))}
-                                    {(selectedTemplate.stickers || []).map((stk) => (
-                                        <div key={stk.id} style={{
-                                            position: 'absolute',
-                                            left: `${stk.x}%`, top: `${stk.y}%`,
-                                            width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
-                                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`
-                                        }}>
-                                            <img src={stk.src} className="w-full h-auto drop-shadow-md" />
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
+                                    );
+                                })}
+                            </div>
 
                             {/* Watermark */}
                             {selectedTemplate.watermarkText && (

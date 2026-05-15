@@ -1,14 +1,15 @@
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { 
-    X, Save, Palette, Layout, Type, Star, Image as ImageIcon, 
-    ChevronLeft, ChevronRight, Plus, Trash2, Maximize, 
-    Move, RotateCw, Hash, Grid, Copy, Layers, AlignCenter,
-    FlipHorizontal, ArrowUp, ArrowDown, RotateCcw, Eye, EyeOff, RefreshCcw,
-    ZoomIn, ZoomOut
+import {
+    Save, Palette, Layout, Type, Star, Image as ImageIcon,
+    ChevronRight, Plus, Trash2,
+    Move, RotateCw, Hash, Copy, Layers, AlignCenter,
+    FlipHorizontal, ArrowUp, ArrowDown, RotateCcw, RefreshCcw,
+    ZoomIn, ZoomOut, Lock, Unlock,
+    AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
+    AlignStartVertical, AlignCenterVertical, AlignEndVertical,
 } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
 import { supabase } from '@/lib/supabase';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -30,6 +31,7 @@ interface Sticker {
     flipY: boolean;
     opacity: number;
     zIndex?: number;
+    locked?: boolean;
 }
 
 interface TextElement {
@@ -48,6 +50,9 @@ interface TextElement {
     opacity: number;
     rotation: number;
     zIndex?: number;
+    locked?: boolean;
+    textStroke?: string;
+    textStrokeWidth?: number;
 }
 
 interface PhotoSlot {
@@ -57,6 +62,9 @@ interface PhotoSlot {
     width: number;  // percentage
     height: number; // percentage
     rotation: number;
+    zIndex?: number;
+    locked?: boolean;
+    opacity?: number;
 }
 
 export interface TemplateConfig {
@@ -68,6 +76,8 @@ export interface TemplateConfig {
     slots: PhotoSlot[];
     background: string;
     backgroundImage?: string | null;
+    backgroundOverlay?: string | null;       // tint color over background image
+    backgroundOverlayOpacity?: number;       // 0-1
     borderColor: string;
     borderWidth: number;
     borderRadius: number;
@@ -532,7 +542,7 @@ function createBlankTemplate(rows: number, cols: number): Omit<TemplateConfig, '
 
 // ─── Design Tab Panels ──────────────────────────────────────────────────────
 
-type DesignTab = 'presets' | 'layout' | 'style' | 'text' | 'stickers';
+type DesignTab = 'presets' | 'layout' | 'style' | 'text' | 'stickers' | 'layers';
 
 interface TemplateDesignerProps {
     initialTemplate?: TemplateConfig | null;
@@ -593,7 +603,12 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     const [userStickers, setUserStickers] = useState<{ id: string; image_url: string }[]>([]);
     const [loadingStickers, setLoadingStickers] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [dragLayerId, setDragLayerId] = useState<string | null>(null);
+    const [dragOverLayerId, setDragOverLayerId] = useState<string | null>(null);
     const visualizerRef = useRef<TemplateVisualizerHandle>(null);
+    // Always tracks the latest template value — used by drag/resize end callbacks
+    const templateRef = useRef(template);
+    templateRef.current = template;
 
     // ── Context Menu State ──
     const [contextMenu, setContextMenu] = useState<{
@@ -604,37 +619,47 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     } | null>(null);
 
     // ── History Management ──
-    const [history, setHistory] = useState<TemplateConfig[]>([(() => {
-        if (initialTemplate) return { ...initialTemplate };
-        return { id: generateId(), ...PRESET_TEMPLATES[0] };
-    })()]);
-    const [historyIndex, setHistoryIndex] = useState(0);
+    // Stored in a ref to avoid stale-closure bugs: pushToHistory/undo/redo never
+    // read stale state because they always go through the ref directly.
+    const historyRef = useRef<{ list: TemplateConfig[]; index: number }>({
+        list: [JSON.parse(JSON.stringify(
+            initialTemplate ?? { id: generateId(), ...PRESET_TEMPLATES[0] }
+        ))],
+        index: 0,
+    });
+    // Bumped on every history change to trigger re-renders for canUndo/canRedo.
+    const [, setHistoryVersion] = useState(0);
+    const canUndo = historyRef.current.index > 0;
+    const canRedo = historyRef.current.index < historyRef.current.list.length - 1;
 
     const pushToHistory = useCallback((newTemplate: TemplateConfig) => {
-        setHistory(prev => {
-            const next = prev.slice(0, historyIndex + 1);
-            // Limit history to 50 steps
-            if (next.length > 50) next.shift();
-            return [...next, JSON.parse(JSON.stringify(newTemplate))];
-        });
-        setHistoryIndex(prev => Math.min(prev + 1, 49));
-    }, [historyIndex]);
+        const h = historyRef.current;
+        const next = h.list.slice(0, h.index + 1);
+        if (next.length >= 50) next.shift();
+        next.push(JSON.parse(JSON.stringify(newTemplate)));
+        historyRef.current = { list: next, index: next.length - 1 };
+        setHistoryVersion(v => v + 1);
+    }, []);
 
     const undo = useCallback(() => {
-        if (historyIndex > 0) {
-            const prev = history[historyIndex - 1];
-            setTemplate(JSON.parse(JSON.stringify(prev)));
-            setHistoryIndex(historyIndex - 1);
+        const h = historyRef.current;
+        if (h.index > 0) {
+            const newIndex = h.index - 1;
+            historyRef.current = { ...h, index: newIndex };
+            setTemplate(JSON.parse(JSON.stringify(h.list[newIndex])));
+            setHistoryVersion(v => v + 1);
         }
-    }, [history, historyIndex]);
+    }, []);
 
     const redo = useCallback(() => {
-        if (historyIndex < history.length - 1) {
-            const next = history[historyIndex + 1];
-            setTemplate(JSON.parse(JSON.stringify(next)));
-            setHistoryIndex(historyIndex + 1);
+        const h = historyRef.current;
+        if (h.index < h.list.length - 1) {
+            const newIndex = h.index + 1;
+            historyRef.current = { ...h, index: newIndex };
+            setTemplate(JSON.parse(JSON.stringify(h.list[newIndex])));
+            setHistoryVersion(v => v + 1);
         }
-    }, [history, historyIndex]);
+    }, []);
 
     const previewRef = useRef<HTMLDivElement>(null);
     const [workspaceZoom, setWorkspaceZoom] = useState(1);
@@ -790,6 +815,15 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         setTemplate((prev) => ({ ...prev, ...patch }));
     }, []);
 
+    const getNextZIndex = useCallback(() => {
+        const all = [
+            ...template.slots.map(s => s.zIndex ?? 0),
+            ...(template.stickers || []).map(s => s.zIndex ?? 0),
+            ...template.textElements.map(t => t.zIndex ?? 0),
+        ];
+        return all.length > 0 ? Math.max(...all) + 1 : 1;
+    }, [template]);
+
     const applyPreset = useCallback((preset: Omit<TemplateConfig, 'id'>) => {
         const next = { id: generateId(), ...preset, stickers: [] } as TemplateConfig;
         setTemplate(next);
@@ -836,13 +870,14 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
 
     const addTextElement = useCallback(() => {
         const el = createDefaultTextElement();
+        el.zIndex = getNextZIndex();
         setTemplate(prev => {
             const next = { ...prev, textElements: [...prev.textElements, el] };
             pushToHistory(next);
             return next;
         });
         setSelectedTextId(el.id);
-    }, [pushToHistory]);
+    }, [pushToHistory, getNextZIndex]);
 
     const deleteTextElement = useCallback((id: string) => {
         setTemplate(prev => {
@@ -878,13 +913,14 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
 
     const addSticker = useCallback((src: string) => {
         const stk = createDefaultSticker(src);
+        stk.zIndex = getNextZIndex();
         setTemplate(prev => {
             const next = { ...prev, stickers: [...(prev.stickers || []), stk] };
             pushToHistory(next);
             return next;
         });
         setSelectedStickerId(stk.id);
-    }, [pushToHistory]);
+    }, [pushToHistory, getNextZIndex]);
 
     const updateSticker = useCallback((id: string, patch: Partial<Sticker>) => {
         setTemplate(prev => ({
@@ -930,8 +966,8 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         }
     }, [updateSticker, updateText, updateSlot, template.width]);
 
-    const startDrag = useDraggable(previewRef, moveElement, () => pushToHistory(template));
-    const startResize = useResizable(previewRef, resizeElement, () => pushToHistory(template));
+    const startDrag = useDraggable(previewRef, moveElement, () => pushToHistory(templateRef.current));
+    const startResize = useResizable(previewRef, resizeElement, () => pushToHistory(templateRef.current));
 
     // ── Context Menu Handlers ──
     const openContextMenu = useCallback((e: React.MouseEvent, elementId: string, elementType: 'slot' | 'text' | 'sticker') => {
@@ -949,115 +985,208 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
             const src = template.slots.find(s => s.id === id);
             if (!src) return;
             const newId = `s${template.slots.length + 1}`;
-            const dup = { ...src, id: newId, x: Math.min(src.x + 5, 90), y: Math.min(src.y + 5, 90) };
+            const dup = { ...src, id: newId, x: Math.min(src.x + 5, 90), y: Math.min(src.y + 5, 90), zIndex: getNextZIndex() };
             setTemplate(prev => { const next = { ...prev, slots: [...prev.slots, dup] }; pushToHistory(next); return next; });
             setSelectedSlotId(newId);
         } else if (type === 'text') {
             const src = template.textElements.find(t => t.id === id);
             if (!src) return;
-            const dup = { ...src, id: `txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, x: Math.min(src.x + 5, 95), y: Math.min(src.y + 5, 95) };
+            const dup = { ...src, id: `txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, x: Math.min(src.x + 5, 95), y: Math.min(src.y + 5, 95), zIndex: getNextZIndex() };
             setTemplate(prev => { const next = { ...prev, textElements: [...prev.textElements, dup] }; pushToHistory(next); return next; });
             setSelectedTextId(dup.id);
         } else if (type === 'sticker') {
             const src = (template.stickers || []).find(s => s.id === id);
             if (!src) return;
-            const dup = { ...src, id: `stk_${Date.now()}`, x: Math.min(src.x + 5, 95), y: Math.min(src.y + 5, 95) };
+            const dup = { ...src, id: `stk_${Date.now()}`, x: Math.min(src.x + 5, 95), y: Math.min(src.y + 5, 95), zIndex: getNextZIndex() };
             setTemplate(prev => { const next = { ...prev, stickers: [...(prev.stickers || []), dup] }; pushToHistory(next); return next; });
             setSelectedStickerId(dup.id);
         }
         setContextMenu(null);
-    }, [template, pushToHistory]);
+    }, [template, pushToHistory, getNextZIndex]);
 
     const resetElementPosition = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
-        if (type === 'slot') updateSlot(id, { x: 10, y: 10, rotation: 0 });
-        else if (type === 'text') updateText(id, { x: 50, y: 50, rotation: 0 });
-        else if (type === 'sticker') updateSticker(id, { x: 50, y: 50, rotation: 0 });
-        pushToHistory(template);
-        setContextMenu(null);
-    }, [updateSlot, updateText, updateSticker, pushToHistory, template]);
-
-    const resetElementRotation = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
-        if (type === 'slot') updateSlot(id, { rotation: 0 });
-        else if (type === 'text') updateText(id, { rotation: 0 });
-        else if (type === 'sticker') updateSticker(id, { rotation: 0 });
-        pushToHistory(template);
-        setContextMenu(null);
-    }, [updateSlot, updateText, updateSticker, pushToHistory, template]);
-
-    const bringToFront = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
-        if (type === 'slot') {
-            setTemplate(prev => {
-                const idx = prev.slots.findIndex(s => s.id === id);
-                if (idx < 0) return prev;
-                const slots = [...prev.slots];
-                const [item] = slots.splice(idx, 1);
-                slots.push(item);
-                const next = { ...prev, slots };
-                pushToHistory(next);
-                return next;
-            });
-        } else if (type === 'text') {
-            setTemplate(prev => {
-                const idx = prev.textElements.findIndex(t => t.id === id);
-                if (idx < 0) return prev;
-                const textElements = [...prev.textElements];
-                const [item] = textElements.splice(idx, 1);
-                textElements.push(item);
-                const next = { ...prev, textElements };
-                pushToHistory(next);
-                return next;
-            });
-        } else if (type === 'sticker') {
-            setTemplate(prev => {
-                const stickers = [...(prev.stickers || [])];
-                const idx = stickers.findIndex(s => s.id === id);
-                if (idx < 0) return prev;
-                const [item] = stickers.splice(idx, 1);
-                stickers.push(item);
-                const next = { ...prev, stickers };
-                pushToHistory(next);
-                return next;
-            });
-        }
+        setTemplate(prev => {
+            let next = { ...prev };
+            if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, x: 10, y: 10, rotation: 0 } : s) };
+            else if (type === 'text') next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, x: 50, y: 50, rotation: 0 } : t) };
+            else next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, x: 50, y: 50, rotation: 0 } : s) };
+            pushToHistory(next);
+            return next;
+        });
         setContextMenu(null);
     }, [pushToHistory]);
 
+    const resetElementRotation = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        setTemplate(prev => {
+            let next = { ...prev };
+            if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, rotation: 0 } : s) };
+            else if (type === 'text') next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, rotation: 0 } : t) };
+            else next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, rotation: 0 } : s) };
+            pushToHistory(next);
+            return next;
+        });
+        setContextMenu(null);
+    }, [pushToHistory]);
+
+    const bringToFront = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        const maxZ = Math.max(
+            ...template.slots.map(s => s.zIndex ?? 0),
+            ...(template.stickers || []).map(s => s.zIndex ?? 0),
+            ...template.textElements.map(t => t.zIndex ?? 0),
+        );
+        setTemplate(prev => {
+            let next = { ...prev };
+            if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, zIndex: maxZ + 1 } : s) };
+            else if (type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, zIndex: maxZ + 1 } : s) };
+            else next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, zIndex: maxZ + 1 } : t) };
+            pushToHistory(next);
+            return next;
+        });
+        setContextMenu(null);
+    }, [template, pushToHistory]);
+
     const sendToBack = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
-        if (type === 'slot') {
+        const minZ = Math.min(
+            ...template.slots.map(s => s.zIndex ?? 0),
+            ...(template.stickers || []).map(s => s.zIndex ?? 0),
+            ...template.textElements.map(t => t.zIndex ?? 0),
+        );
+        setTemplate(prev => {
+            let next = { ...prev };
+            if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, zIndex: minZ - 1 } : s) };
+            else if (type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, zIndex: minZ - 1 } : s) };
+            else next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, zIndex: minZ - 1 } : t) };
+            pushToHistory(next);
+            return next;
+        });
+        setContextMenu(null);
+    }, [template, pushToHistory]);
+
+    const moveLayerUp = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        const allElements = [
+            ...template.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
+            ...(template.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
+            ...template.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
+        ].sort((a, b) => a.zIndex - b.zIndex);
+        const idx = allElements.findIndex(e => e.id === id);
+        if (idx < allElements.length - 1) {
+            const current = allElements[idx];
+            const above = allElements[idx + 1];
             setTemplate(prev => {
-                const idx = prev.slots.findIndex(s => s.id === id);
-                if (idx < 0) return prev;
-                const slots = [...prev.slots];
-                const [item] = slots.splice(idx, 1);
-                slots.unshift(item);
-                const next = { ...prev, slots };
-                pushToHistory(next);
-                return next;
-            });
-        } else if (type === 'text') {
-            setTemplate(prev => {
-                const idx = prev.textElements.findIndex(t => t.id === id);
-                if (idx < 0) return prev;
-                const textElements = [...prev.textElements];
-                const [item] = textElements.splice(idx, 1);
-                textElements.unshift(item);
-                const next = { ...prev, textElements };
-                pushToHistory(next);
-                return next;
-            });
-        } else if (type === 'sticker') {
-            setTemplate(prev => {
-                const stickers = [...(prev.stickers || [])];
-                const idx = stickers.findIndex(s => s.id === id);
-                if (idx < 0) return prev;
-                const [item] = stickers.splice(idx, 1);
-                stickers.unshift(item);
-                const next = { ...prev, stickers };
+                let next = { ...prev };
+                const setZ = (el: typeof current, z: number) => {
+                    if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
+                    else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
+                    else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: z } : t) };
+                };
+                setZ(current, above.zIndex);
+                setZ(above, current.zIndex);
                 pushToHistory(next);
                 return next;
             });
         }
-        setContextMenu(null);
+    }, [template, pushToHistory]);
+
+    const moveLayerDown = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        const allElements = [
+            ...template.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
+            ...(template.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
+            ...template.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
+        ].sort((a, b) => a.zIndex - b.zIndex);
+        const idx = allElements.findIndex(e => e.id === id);
+        if (idx > 0) {
+            const current = allElements[idx];
+            const below = allElements[idx - 1];
+            setTemplate(prev => {
+                let next = { ...prev };
+                const setZ = (el: typeof current, z: number) => {
+                    if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
+                    else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
+                    else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: z } : t) };
+                };
+                setZ(current, below.zIndex);
+                setZ(below, current.zIndex);
+                pushToHistory(next);
+                return next;
+            });
+        }
+    }, [template, pushToHistory]);
+
+    const reorderLayers = useCallback((sourceId: string, targetId: string) => {
+        if (sourceId === targetId) return;
+        const sorted = [
+            ...template.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0 })),
+            ...(template.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0 })),
+            ...template.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0 })),
+        ].sort((a, b) => b.zIndex - a.zIndex); // desc = front-first panel order
+
+        const sourceIdx = sorted.findIndex(e => e.id === sourceId);
+        const targetIdx = sorted.findIndex(e => e.id === targetId);
+        if (sourceIdx === -1 || targetIdx === -1) return;
+
+        const newOrder = [...sorted];
+        const [moved] = newOrder.splice(sourceIdx, 1);
+        newOrder.splice(targetIdx, 0, moved);
+
+        const n = newOrder.length;
+        setTemplate(prev => {
+            let next = { ...prev };
+            newOrder.forEach((el, i) => {
+                const z = n - 1 - i; // first in panel (front) = highest z
+                if (el.type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
+                else if (el.type === 'sticker') next = { ...next, stickers: (next.stickers || []).map(s => s.id === el.id ? { ...s, zIndex: z } : s) };
+                else next = { ...next, textElements: next.textElements.map(t => t.id === el.id ? { ...t, zIndex: z } : t) };
+            });
+            pushToHistory(next);
+            return next;
+        });
+    }, [template, pushToHistory]);
+
+    type AlignOp = 'centerH' | 'centerV' | 'left' | 'right' | 'top' | 'bottom';
+    const alignElement = useCallback((id: string, type: 'slot' | 'text' | 'sticker', op: AlignOp) => {
+        setTemplate(prev => {
+            let next = { ...prev };
+            if (type === 'slot') {
+                next = { ...next, slots: next.slots.map(s => {
+                    if (s.id !== id) return s;
+                    const updates: Partial<PhotoSlot> = {};
+                    if (op === 'centerH') updates.x = 50 - s.width / 2;
+                    else if (op === 'centerV') updates.y = 50 - s.height / 2;
+                    else if (op === 'left') updates.x = 0;
+                    else if (op === 'right') updates.x = 100 - s.width;
+                    else if (op === 'top') updates.y = 0;
+                    else if (op === 'bottom') updates.y = 100 - s.height;
+                    return { ...s, ...updates };
+                })};
+            } else if (type === 'text') {
+                next = { ...next, textElements: next.textElements.map(t => {
+                    if (t.id !== id) return t;
+                    if (op === 'centerH') return { ...t, x: 50 };
+                    if (op === 'centerV') return { ...t, y: 50 };
+                    return t;
+                })};
+            } else {
+                next = { ...next, stickers: (next.stickers || []).map(s => {
+                    if (s.id !== id) return s;
+                    if (op === 'centerH') return { ...s, x: 50 };
+                    if (op === 'centerV') return { ...s, y: 50 };
+                    return s;
+                })};
+            }
+            pushToHistory(next);
+            return next;
+        });
+    }, [pushToHistory]);
+
+    const toggleLock = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
+        setTemplate(prev => {
+            let next = { ...prev };
+            if (type === 'slot') next = { ...next, slots: next.slots.map(s => s.id === id ? { ...s, locked: !s.locked } : s) };
+            else if (type === 'text') next = { ...next, textElements: next.textElements.map(t => t.id === id ? { ...t, locked: !t.locked } : t) };
+            else next = { ...next, stickers: (next.stickers || []).map(s => s.id === id ? { ...s, locked: !s.locked } : s) };
+            pushToHistory(next);
+            return next;
+        });
     }, [pushToHistory]);
 
     const deleteFromContextMenu = useCallback((id: string, type: 'slot' | 'text' | 'sticker') => {
@@ -1088,14 +1217,12 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                 redo();
             }
 
-            // Delete
+            // Delete (skip locked elements)
             if (e.key === 'Delete' || e.key === 'Backspace') {
-                // Only if not typing in an input
                 if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-                
-                if (selectedSlotId) deleteSlot(selectedSlotId);
-                else if (selectedTextId) deleteTextElement(selectedTextId);
-                else if (selectedStickerId) deleteSticker(selectedStickerId);
+                if (selectedSlotId && !templateRef.current.slots.find(s => s.id === selectedSlotId)?.locked) deleteSlot(selectedSlotId);
+                else if (selectedTextId && !templateRef.current.textElements.find(t => t.id === selectedTextId)?.locked) deleteTextElement(selectedTextId);
+                else if (selectedStickerId && !(templateRef.current.stickers || []).find(s => s.id === selectedStickerId)?.locked) deleteSticker(selectedStickerId);
             }
         };
 
@@ -1201,6 +1328,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         { key: 'style', label: 'Style', icon: Palette },
         { key: 'text', label: 'Text', icon: Type },
         { key: 'stickers', label: 'Stickers', icon: Star },
+        { key: 'layers', label: 'Layers', icon: Layers },
     ];
 
     return (
@@ -1270,15 +1398,15 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                         <div className="flex items-center gap-1 bg-neutral-900 border border-white/5 rounded-full p-1 mr-4">
                             <button 
                                 onClick={undo} 
-                                disabled={historyIndex === 0}
+                                disabled={!canUndo}
                                 className="w-9 h-9 flex items-center justify-center hover:bg-white/5 disabled:opacity-20 transition-all rounded-full text-neutral-400"
                                 title="Undo (Ctrl+Z)"
                             >
                                 <RotateCw size={16} className="scale-x-[-1]" />
                             </button>
-                            <button 
-                                onClick={redo} 
-                                disabled={historyIndex === history.length - 1}
+                            <button
+                                onClick={redo}
+                                disabled={!canRedo}
                                 className="w-9 h-9 flex items-center justify-center hover:bg-white/5 disabled:opacity-20 transition-all rounded-full text-neutral-400"
                                 title="Redo (Ctrl+Shift+Z)"
                             >
@@ -1311,7 +1439,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                     {/* Sidebar */}
                     <aside className="w-80 bg-neutral-950 border-r border-white/5 flex flex-col overflow-hidden">
                         {/* Tab Bar */}
-                        <div className="grid grid-cols-5 gap-1 p-3 bg-white/5 border-b border-white/5">
+                        <div className="grid grid-cols-6 gap-1 p-3 bg-white/5 border-b border-white/5">
                             {tabs.map((t) => (
                                 <button
                                     key={t.key}
@@ -1601,7 +1729,49 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                             <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Rotation</label>
                                                             <span className="text-[9px] font-black text-white">{template.slots.find(s => s.id === selectedSlotId)?.rotation || 0}°</span>
                                                         </div>
-                                                        <input type="range" min={-180} max={180} value={template.slots.find(s => s.id === selectedSlotId)?.rotation || 0} onChange={(e) => updateSlot(selectedSlotId, { rotation: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                        <input type="range" min={-180} max={180} value={template.slots.find(s => s.id === selectedSlotId)?.rotation || 0} onChange={(e) => updateSlot(selectedSlotId, { rotation: +e.target.value })} onMouseUp={() => pushToHistory(templateRef.current)} className="w-full accent-blue-500" />
+                                                    </div>
+
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Opacity</label>
+                                                            <span className="text-[9px] font-black text-white">{Math.round((template.slots.find(s => s.id === selectedSlotId)?.opacity ?? 1) * 100)}%</span>
+                                                        </div>
+                                                        <input type="range" min={10} max={100} value={Math.round((template.slots.find(s => s.id === selectedSlotId)?.opacity ?? 1) * 100)} onChange={(e) => updateSlot(selectedSlotId, { opacity: +e.target.value / 100 })} onMouseUp={() => pushToHistory(templateRef.current)} className="w-full accent-blue-500" />
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-3 pt-4 border-t border-white/5">
+                                                    <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Alignment</label>
+                                                    <div className="grid grid-cols-3 gap-1.5">
+                                                        {([
+                                                            { op: 'left' as const, icon: AlignStartVertical, label: 'Left' },
+                                                            { op: 'centerH' as const, icon: AlignCenterVertical, label: 'H Mid' },
+                                                            { op: 'right' as const, icon: AlignEndVertical, label: 'Right' },
+                                                            { op: 'top' as const, icon: AlignStartHorizontal, label: 'Top' },
+                                                            { op: 'centerV' as const, icon: AlignCenterHorizontal, label: 'V Mid' },
+                                                            { op: 'bottom' as const, icon: AlignEndHorizontal, label: 'Bottom' },
+                                                        ]).map(({ op, icon: Icon, label }) => (
+                                                            <button key={op} onClick={() => alignElement(selectedSlotId, 'slot', op)}
+                                                                className="flex flex-col items-center justify-center gap-1 h-10 rounded-xl bg-neutral-900 border border-white/5 text-neutral-400 hover:border-blue-500/50 hover:text-white transition-all"
+                                                                title={label}
+                                                            >
+                                                                <Icon size={12} />
+                                                                <span className="text-[6px] font-black uppercase tracking-widest">{label}</span>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-3 pt-4 border-t border-white/5">
+                                                    <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Layer Order</label>
+                                                    <div className="grid grid-cols-2 gap-1.5">
+                                                        <button onClick={() => moveLayerDown(selectedSlotId, 'slot')} className="flex items-center justify-center gap-1 h-9 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all text-[7px] font-black uppercase tracking-widest">
+                                                            <ArrowDown size={12} /> Back
+                                                        </button>
+                                                        <button onClick={() => moveLayerUp(selectedSlotId, 'slot')} className="flex items-center justify-center gap-1 h-9 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all text-[7px] font-black uppercase tracking-widest">
+                                                            <ArrowUp size={12} /> Front
+                                                        </button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1636,6 +1806,32 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             {backgroundImage && (
                                                 <button onClick={() => setBackgroundImage(null)} className="text-[7px] font-black text-red-500 uppercase tracking-widest hover:text-red-400 transition-all">Discard Layer</button>
                                             )}
+                                        </div>
+
+                                        <div className="flex flex-col gap-3">
+                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Color Overlay</label>
+                                            <div className="flex items-center gap-3 bg-neutral-900 border border-white/5 rounded-xl p-2">
+                                                <input type="color"
+                                                    value={template.backgroundOverlay || '#000000'}
+                                                    onChange={(e) => update({ backgroundOverlay: e.target.value })}
+                                                    className="w-8 h-8 rounded-lg cursor-pointer border-0 bg-transparent"
+                                                />
+                                                <div className="flex-1 space-y-1">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-[7px] font-black text-neutral-500 uppercase">Opacity</span>
+                                                        <span className="text-[8px] font-black text-white">{Math.round((template.backgroundOverlayOpacity ?? 0) * 100)}%</span>
+                                                    </div>
+                                                    <input type="range" min={0} max={100}
+                                                        value={Math.round((template.backgroundOverlayOpacity ?? 0) * 100)}
+                                                        onChange={(e) => update({ backgroundOverlayOpacity: +e.target.value / 100 })}
+                                                        onMouseUp={() => pushToHistory(templateRef.current)}
+                                                        className="w-full accent-blue-500"
+                                                    />
+                                                </div>
+                                                {template.backgroundOverlay && (template.backgroundOverlayOpacity ?? 0) > 0 && (
+                                                    <button onClick={() => update({ backgroundOverlayOpacity: 0 })} className="text-[7px] font-black text-red-500 hover:text-red-400 transition-all shrink-0">Clear</button>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
 
@@ -1794,49 +1990,50 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 </div>
                                             </div>
 
+                                            <div className="space-y-4 pt-4 border-t border-white/5">
+                                                <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Stroke / Outline</h4>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="space-y-2">
+                                                        <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Color</label>
+                                                        <div className="flex bg-neutral-900 border border-white/5 rounded-xl p-2 h-[42px]">
+                                                            <input type="color" value={selectedText.textStroke || '#000000'} onChange={(e) => updateText(selectedText.id, { textStroke: e.target.value })} className="w-full h-full cursor-pointer bg-transparent border-0" />
+                                                        </div>
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Width</label>
+                                                            <span className="text-[9px] font-black text-white">{selectedText.textStrokeWidth ?? 0}px</span>
+                                                        </div>
+                                                        <input type="range" min={0} max={8} step={0.5} value={selectedText.textStrokeWidth ?? 0} onChange={(e) => updateText(selectedText.id, { textStrokeWidth: +e.target.value })} onMouseUp={() => pushToHistory(templateRef.current)} className="w-full accent-blue-500 mt-3" />
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-3 pt-4 border-t border-white/5">
+                                                <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Alignment</label>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <button onClick={() => alignElement(selectedText.id, 'text', 'centerH')} className="flex items-center justify-center gap-1.5 h-9 rounded-xl bg-neutral-900 border border-white/5 text-neutral-400 hover:border-blue-500/50 hover:text-white transition-all text-[7px] font-black uppercase tracking-widest">
+                                                        <AlignCenterVertical size={12} /> H Center
+                                                    </button>
+                                                    <button onClick={() => alignElement(selectedText.id, 'text', 'centerV')} className="flex items-center justify-center gap-1.5 h-9 rounded-xl bg-neutral-900 border border-white/5 text-neutral-400 hover:border-blue-500/50 hover:text-white transition-all text-[7px] font-black uppercase tracking-widest">
+                                                        <AlignCenterHorizontal size={12} /> V Center
+                                                    </button>
+                                                </div>
+                                            </div>
+
                                             <div className="pt-4 border-t border-white/5 space-y-4">
                                                 <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Layering</h4>
                                                 <div className="grid grid-cols-4 gap-1.5">
-                                                    <button 
-                                                        onClick={() => {
-                                                            const minZ = Math.min(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
-                                                            updateText(selectedText.id, { zIndex: minZ - 100 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
-                                                        title="Send to Back"
-                                                    >
+                                                    <button onClick={() => sendToBack(selectedText.id, 'text')} className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all" title="Send to Back">
                                                         <ArrowDown size={14} className="translate-y-0.5" /><ArrowDown size={14} className="-translate-y-0.5" />
                                                     </button>
-                                                    <button 
-                                                        onClick={() => {
-                                                            updateText(selectedText.id, { zIndex: (selectedText.zIndex || 0) - 1 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
-                                                        title="Move Backward"
-                                                    >
+                                                    <button onClick={() => moveLayerDown(selectedText.id, 'text')} className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all" title="Move Backward">
                                                         <ArrowDown size={14} />
                                                     </button>
-                                                    <button 
-                                                        onClick={() => {
-                                                            updateText(selectedText.id, { zIndex: (selectedText.zIndex || 0) + 1 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
-                                                        title="Move Forward"
-                                                    >
+                                                    <button onClick={() => moveLayerUp(selectedText.id, 'text')} className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all" title="Move Forward">
                                                         <ArrowUp size={14} />
                                                     </button>
-                                                    <button 
-                                                        onClick={() => {
-                                                            const maxZ = Math.max(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
-                                                            updateText(selectedText.id, { zIndex: maxZ + 100 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
-                                                        title="Bring to Front"
-                                                    >
+                                                    <button onClick={() => bringToFront(selectedText.id, 'text')} className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all" title="Bring to Front">
                                                         <ArrowUp size={14} className="-translate-y-0.5" /><ArrowUp size={14} className="translate-y-0.5" />
                                                     </button>
                                                 </div>
@@ -1930,50 +2127,33 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 </div>
                                             )}
 
+                                            {/* Alignment */}
+                                            <div className="space-y-3">
+                                                <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Alignment</h4>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <button onClick={() => alignElement(selectedSticker.id, 'sticker', 'centerH')} className="flex items-center justify-center gap-1.5 h-9 rounded-xl bg-neutral-900 border border-white/5 text-neutral-400 hover:border-blue-500/50 hover:text-white transition-all text-[7px] font-black uppercase tracking-widest">
+                                                        <AlignCenterVertical size={12} /> H Center
+                                                    </button>
+                                                    <button onClick={() => alignElement(selectedSticker.id, 'sticker', 'centerV')} className="flex items-center justify-center gap-1.5 h-9 rounded-xl bg-neutral-900 border border-white/5 text-neutral-400 hover:border-blue-500/50 hover:text-white transition-all text-[7px] font-black uppercase tracking-widest">
+                                                        <AlignCenterHorizontal size={12} /> V Center
+                                                    </button>
+                                                </div>
+                                            </div>
+
                                             {/* Transform & Layering */}
                                             <div className="space-y-4">
                                                 <h4 className="text-[7px] font-black text-neutral-600 uppercase tracking-[0.2em]">Layering</h4>
                                                 <div className="grid grid-cols-4 gap-1.5">
-                                                    <button 
-                                                        onClick={() => {
-                                                            const minZ = Math.min(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
-                                                            updateSticker(selectedSticker.id, { zIndex: minZ - 100 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
-                                                        title="Send to Back"
-                                                    >
+                                                    <button onClick={() => sendToBack(selectedSticker.id, 'sticker')} className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all" title="Send to Back">
                                                         <ArrowDown size={14} className="translate-y-0.5" /><ArrowDown size={14} className="-translate-y-0.5" />
                                                     </button>
-                                                    <button 
-                                                        onClick={() => {
-                                                            updateSticker(selectedSticker.id, { zIndex: (selectedSticker.zIndex || 0) - 1 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
-                                                        title="Move Backward"
-                                                    >
+                                                    <button onClick={() => moveLayerDown(selectedSticker.id, 'sticker')} className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all" title="Move Backward">
                                                         <ArrowDown size={14} />
                                                     </button>
-                                                    <button 
-                                                        onClick={() => {
-                                                            updateSticker(selectedSticker.id, { zIndex: (selectedSticker.zIndex || 0) + 1 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
-                                                        title="Move Forward"
-                                                    >
+                                                    <button onClick={() => moveLayerUp(selectedSticker.id, 'sticker')} className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all" title="Move Forward">
                                                         <ArrowUp size={14} />
                                                     </button>
-                                                    <button 
-                                                        onClick={() => {
-                                                            const maxZ = Math.max(0, ...(template.stickers || []).map(s => s.zIndex || 0), ...template.textElements.map(t => t.zIndex || 0));
-                                                            updateSticker(selectedSticker.id, { zIndex: maxZ + 100 });
-                                                            pushToHistory(template);
-                                                        }}
-                                                        className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all"
-                                                        title="Bring to Front"
-                                                    >
+                                                    <button onClick={() => bringToFront(selectedSticker.id, 'sticker')} className="flex items-center justify-center h-10 rounded-xl bg-neutral-900 border border-white/5 text-white hover:border-blue-500/50 transition-all" title="Bring to Front">
                                                         <ArrowUp size={14} className="-translate-y-0.5" /><ArrowUp size={14} className="translate-y-0.5" />
                                                     </button>
                                                 </div>
@@ -2018,6 +2198,136 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                     )}
                                 </section>
                             )}
+
+                            {/* ── Layers ── */}
+                            {activeTab === 'layers' && (() => {
+                                const allElements = [
+                                    ...template.slots.map(s => ({ id: s.id, type: 'slot' as const, zIndex: s.zIndex ?? 0, label: s.id })),
+                                    ...(template.stickers || []).map(s => ({ id: s.id, type: 'sticker' as const, zIndex: s.zIndex ?? 0, label: 'Sticker' })),
+                                    ...template.textElements.map(t => ({ id: t.id, type: 'text' as const, zIndex: t.zIndex ?? 0, label: t.text.slice(0, 20) })),
+                                ].sort((a, b) => b.zIndex - a.zIndex); // front-first
+
+                                const selectedId = selectedSlotId || selectedTextId || selectedStickerId;
+
+                                const typeColors = {
+                                    slot:    { bg: 'bg-blue-500/10',   border: 'border-blue-500/30',   text: 'text-blue-400',   badge: 'bg-blue-500'   },
+                                    sticker: { bg: 'bg-orange-500/10', border: 'border-orange-500/30', text: 'text-orange-400', badge: 'bg-orange-500' },
+                                    text:    { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-400', badge: 'bg-purple-500'  },
+                                };
+
+                                return (
+                                    <section className="space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Layer Stack</h3>
+                                            <span className="text-[7px] text-neutral-600 uppercase tracking-widest">drag to reorder</span>
+                                        </div>
+                                        <div className="space-y-1">
+                                            {allElements.length === 0 && (
+                                                <div className="py-8 text-center text-[8px] text-neutral-600 uppercase tracking-widest">No layers yet</div>
+                                            )}
+                                            {allElements.map((el) => {
+                                                const isSelected = el.id === selectedId;
+                                                const isDragOver = dragOverLayerId === el.id && dragLayerId !== el.id;
+                                                const colors = typeColors[el.type];
+                                                return (
+                                                    <div
+                                                        key={el.id}
+                                                        draggable
+                                                        onDragStart={(e) => {
+                                                            setDragLayerId(el.id);
+                                                            e.dataTransfer.effectAllowed = 'move';
+                                                        }}
+                                                        onDragOver={(e) => {
+                                                            e.preventDefault();
+                                                            e.dataTransfer.dropEffect = 'move';
+                                                            setDragOverLayerId(el.id);
+                                                        }}
+                                                        onDragLeave={() => setDragOverLayerId(null)}
+                                                        onDrop={(e) => {
+                                                            e.preventDefault();
+                                                            if (dragLayerId) reorderLayers(dragLayerId, el.id);
+                                                            setDragLayerId(null);
+                                                            setDragOverLayerId(null);
+                                                        }}
+                                                        onDragEnd={() => { setDragLayerId(null); setDragOverLayerId(null); }}
+                                                        onClick={() => {
+                                                            if (el.type === 'slot') { setSelectedSlotId(el.id); setSelectedTextId(null); setSelectedStickerId(null); setActiveTab('layout'); }
+                                                            else if (el.type === 'text') { setSelectedTextId(el.id); setSelectedSlotId(null); setSelectedStickerId(null); setActiveTab('text'); }
+                                                            else { setSelectedStickerId(el.id); setSelectedSlotId(null); setSelectedTextId(null); setActiveTab('stickers'); }
+                                                        }}
+                                                        className={`group flex items-center gap-2 px-3 py-2.5 rounded-xl border cursor-grab active:cursor-grabbing transition-all ${
+                                                            dragLayerId === el.id
+                                                                ? 'opacity-40 scale-95'
+                                                                : isDragOver
+                                                                ? 'border-blue-500/60 bg-blue-500/10 scale-[1.02]'
+                                                                : isSelected
+                                                                ? `${colors.bg} ${colors.border}`
+                                                                : 'bg-neutral-900 border-white/5 hover:border-white/20'
+                                                        }`}
+                                                    >
+                                                        {/* drag grip */}
+                                                        <div className="flex flex-col gap-[3px] flex-shrink-0 opacity-30 group-hover:opacity-60 transition-opacity">
+                                                            {[0,1,2].map(i => <div key={i} className="w-3 h-px bg-neutral-400 rounded-full" />)}
+                                                        </div>
+                                                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${colors.badge}`} />
+                                                        <div className="flex-1 min-w-0">
+                                                            <span className={`text-[9px] font-black truncate block ${isSelected ? colors.text : 'text-neutral-300'}`}>
+                                                                {el.label}
+                                                            </span>
+                                                            <span className="text-[7px] text-neutral-600 uppercase tracking-widest">
+                                                                {el.type}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); toggleLock(el.id, el.type); }}
+                                                                className={`w-6 h-6 flex items-center justify-center rounded-lg transition-all ${
+                                                                    (el.type === 'slot' ? template.slots.find(s => s.id === el.id)?.locked :
+                                                                     el.type === 'text' ? template.textElements.find(t => t.id === el.id)?.locked :
+                                                                     (template.stickers || []).find(s => s.id === el.id)?.locked)
+                                                                    ? 'text-amber-400 bg-amber-500/10 opacity-100'
+                                                                    : 'hover:bg-white/10 text-neutral-400 hover:text-amber-400'
+                                                                }`}
+                                                                title="Toggle lock"
+                                                            >
+                                                                {(el.type === 'slot' ? template.slots.find(s => s.id === el.id)?.locked :
+                                                                  el.type === 'text' ? template.textElements.find(t => t.id === el.id)?.locked :
+                                                                  (template.stickers || []).find(s => s.id === el.id)?.locked)
+                                                                    ? <Lock size={10} /> : <Unlock size={10} />}
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); moveLayerUp(el.id, el.type); }}
+                                                                className="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white transition-all"
+                                                                title="Bring forward"
+                                                            >
+                                                                <ArrowUp size={10} />
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); moveLayerDown(el.id, el.type); }}
+                                                                className="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white transition-all"
+                                                                title="Send backward"
+                                                            >
+                                                                <ArrowDown size={10} />
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    if (el.type === 'slot') deleteSlot(el.id);
+                                                                    else if (el.type === 'text') deleteTextElement(el.id);
+                                                                    else deleteSticker(el.id);
+                                                                }}
+                                                                className="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-red-500/10 text-neutral-400 hover:text-red-400 transition-all"
+                                                            >
+                                                                <Trash2 size={10} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </section>
+                                );
+                            })()}
                         </div>
                     </aside>
 
@@ -2028,6 +2338,76 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                             backgroundSize: '30px 30px' 
                         }}
                     >
+                        {/* Floating Selection Toolbar */}
+                        {(selectedSlotId || selectedTextId || selectedStickerId) && (() => {
+                            const id = selectedSlotId || selectedTextId || selectedStickerId;
+                            const type = selectedSlotId ? 'slot' : selectedTextId ? 'text' : 'sticker';
+                            const typeLabels = { slot: 'Photo Slot', text: 'Text Layer', sticker: 'Sticker' };
+                            const typeColors = { slot: '#3b82f6', text: '#a855f7', sticker: '#f97316' };
+                            const allElements = [
+                                ...template.slots.map(s => ({ id: s.id, zIndex: s.zIndex ?? 0 })),
+                                ...(template.stickers || []).map(s => ({ id: s.id, zIndex: s.zIndex ?? 0 })),
+                                ...template.textElements.map(t => ({ id: t.id, zIndex: t.zIndex ?? 0 })),
+                            ].sort((a, b) => a.zIndex - b.zIndex);
+                            const pos = allElements.findIndex(e => e.id === id) + 1;
+                            const total = allElements.length;
+                            const isLocked =
+                                type === 'slot' ? template.slots.find(s => s.id === id)?.locked :
+                                type === 'text' ? template.textElements.find(t => t.id === id)?.locked :
+                                (template.stickers || []).find(s => s.id === id)?.locked;
+                            return (
+                                <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-neutral-950/90 backdrop-blur border border-white/10 rounded-full px-3 py-1.5 shadow-xl z-[200]">
+                                    <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: typeColors[type] }} />
+                                    <span className="text-[8px] font-black text-white uppercase tracking-widest">{typeLabels[type]}</span>
+                                    <div className="h-3 w-px bg-white/10 mx-1" />
+                                    <span className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">Layer {pos}/{total}</span>
+                                    <div className="h-3 w-px bg-white/10 mx-1" />
+
+                                    {/* Alignment */}
+                                    <button onClick={() => alignElement(id!, type, 'centerH')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Center Horizontally">
+                                        <AlignCenterVertical size={10} />
+                                    </button>
+                                    <button onClick={() => alignElement(id!, type, 'centerV')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Center Vertically">
+                                        <AlignCenterHorizontal size={10} />
+                                    </button>
+                                    {type === 'slot' && (<>
+                                        <button onClick={() => alignElement(id!, type, 'left')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Align Left"><AlignStartVertical size={10} /></button>
+                                        <button onClick={() => alignElement(id!, type, 'right')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Align Right"><AlignEndVertical size={10} /></button>
+                                        <button onClick={() => alignElement(id!, type, 'top')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Align Top"><AlignStartHorizontal size={10} /></button>
+                                        <button onClick={() => alignElement(id!, type, 'bottom')} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Align Bottom"><AlignEndHorizontal size={10} /></button>
+                                    </>)}
+
+                                    <div className="h-3 w-px bg-white/10 mx-1" />
+                                    <button onClick={() => moveLayerDown(id!, type)} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Send backward"><ArrowDown size={10} /></button>
+                                    <button onClick={() => moveLayerUp(id!, type)} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Bring forward"><ArrowUp size={10} /></button>
+
+                                    <div className="h-3 w-px bg-white/10 mx-1" />
+                                    {/* Lock */}
+                                    <button
+                                        onClick={() => toggleLock(id!, type)}
+                                        className={`w-6 h-6 flex items-center justify-center rounded-full transition-all ${isLocked ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' : 'hover:bg-white/10 text-neutral-400 hover:text-white'}`}
+                                        title={isLocked ? 'Unlock' : 'Lock'}
+                                    >
+                                        {isLocked ? <Lock size={10} /> : <Unlock size={10} />}
+                                    </button>
+
+                                    <div className="h-3 w-px bg-white/10 mx-1" />
+                                    <button
+                                        onClick={() => {
+                                            if (isLocked) return;
+                                            if (selectedSlotId) deleteSlot(selectedSlotId);
+                                            else if (selectedTextId) deleteTextElement(selectedTextId);
+                                            else if (selectedStickerId) deleteSticker(selectedStickerId);
+                                        }}
+                                        className={`w-6 h-6 flex items-center justify-center rounded-full transition-all ${isLocked ? 'opacity-20 cursor-not-allowed' : 'hover:bg-red-500/10 text-neutral-400 hover:text-red-400'}`}
+                                        title="Delete"
+                                    >
+                                        <Trash2 size={10} />
+                                    </button>
+                                </div>
+                            );
+                        })()}
+
                         {/* Zoom/Pan info */}
                         <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-neutral-900 border border-white/5 px-6 py-2 rounded-full">
                             <span className="text-[9px] font-black text-neutral-500 uppercase tracking-widest">Matrix Preview</span>
@@ -2055,127 +2435,145 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                             }}
                             onClick={() => { setSelectedTextId(null); setSelectedStickerId(null); setSelectedSlotId(null); }}
                         >
-                            {/* Photo Slots (Freeform Layers) */}
-                            {template.slots.map((slot) => (
-                                <div key={slot.id} 
-                                    className={`absolute cursor-grab active:cursor-grabbing flex items-center justify-center group border-2 transition-shadow ${selectedSlotId === slot.id ? 'border-blue-500 shadow-lg shadow-blue-500/20' : 'border-white/10 hover:border-white/30'}`}
-                                    style={{ 
-                                        left: `${slot.x}%`,
-                                        top: `${slot.y}%`,
-                                        width: `${slot.width}%`,
-                                        height: `${slot.height}%`,
-                                        transform: `rotate(${slot.rotation || 0}deg)`,
-                                        backgroundColor: 'rgba(0,0,0,0.4)',
-                                        borderRadius: Math.min(template.borderRadius / 2, 12),
-                                        zIndex: 500,
-                                    }}
-                                    onMouseDown={(e) => {
-                                        setSelectedSlotId(slot.id);
-                                        setSelectedTextId(null);
-                                        setSelectedStickerId(null);
-                                        setActiveTab('layout'); // Auto-switch tab
-                                        startDrag(e, slot.id, slot.x, slot.y);
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onContextMenu={(e) => openContextMenu(e, slot.id, 'slot')}
-                                >
-                                    <div className="flex flex-col items-center gap-2">
-                                        <ImageIcon size={24} className="text-white/20 group-hover:text-white/40 transition-colors" />
-                                        <span className="text-[7px] font-black text-white/20 uppercase tracking-[0.2em]">{slot.id}</span>
-                                    </div>
-                                    
-                                    {selectedSlotId === slot.id && (
-                                        <>
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); deleteSlot(slot.id); }}
-                                                className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-lg z-[100]"
-                                            >
-                                                <Trash2 size={12} />
-                                            </button>
-                                            
-                                            {/* Resize Handles */}
-                                            {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
-                                                <div 
-                                                    key={type}
-                                                    className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[110] cursor-${type}-resize hover:scale-125 transition-transform`}
-                                                    style={{
-                                                        top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
-                                                        left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
-                                                        transform: 'translate(-0%, -0%)',
-                                                        marginTop: type === 'e' || type === 'w' ? -6 : 0,
-                                                        marginLeft: type === 'n' || type === 's' ? -6 : 0,
-                                                    }}
-                                                    onMouseDown={(e) => startResize(e, slot.id, type, slot.x, slot.y, slot.width, slot.height)}
-                                                />
-                                            ))}
-                                        </>
-                                    )}
-                                </div>
-                            ))}
+                            {/* Background overlay tint */}
+                            {template.backgroundOverlay && (
+                                <div className="absolute inset-0 pointer-events-none" style={{
+                                    backgroundColor: template.backgroundOverlay,
+                                    opacity: template.backgroundOverlayOpacity ?? 0.3,
+                                    zIndex: 0,
+                                }} />
+                            )}
 
+                            {/* Unified layer render — sorted by zIndex so DOM order matches stacking order */}
+                            {[
+                                ...template.slots.map(s => ({ type: 'slot' as const, data: s, zIndex: s.zIndex ?? 0 })),
+                                ...(template.stickers || []).map(s => ({ type: 'sticker' as const, data: s, zIndex: s.zIndex ?? 0 })),
+                                ...template.textElements.map(t => ({ type: 'text' as const, data: t, zIndex: t.zIndex ?? 0 })),
+                            ].sort((a, b) => a.zIndex - b.zIndex).map((item) => {
+                                if (item.type === 'slot') {
+                                    const slot = item.data;
+                                    return (
+                                        <div key={slot.id}
+                                            className={`absolute flex items-center justify-center group border-2 transition-shadow ${slot.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedSlotId === slot.id ? 'border-blue-500 shadow-lg shadow-blue-500/20' : 'border-white/10 hover:border-white/30'}`}
+                                            style={{
+                                                left: `${slot.x}%`,
+                                                top: `${slot.y}%`,
+                                                width: `${slot.width}%`,
+                                                height: `${slot.height}%`,
+                                                transform: `rotate(${slot.rotation || 0}deg)`,
+                                                backgroundColor: 'rgba(0,0,0,0.4)',
+                                                borderRadius: Math.min(template.borderRadius / 2, 12),
+                                                zIndex: item.zIndex,
+                                                opacity: slot.opacity ?? 1,
+                                            }}
+                                            onMouseDown={slot.locked ? undefined : (e) => {
+                                                setSelectedSlotId(slot.id);
+                                                setSelectedTextId(null);
+                                                setSelectedStickerId(null);
+                                                setActiveTab('layout');
+                                                startDrag(e, slot.id, slot.x, slot.y);
+                                            }}
+                                            onClick={(e) => { e.stopPropagation(); setSelectedSlotId(slot.id); setSelectedTextId(null); setSelectedStickerId(null); setActiveTab('layout'); }}
+                                            onContextMenu={(e) => openContextMenu(e, slot.id, 'slot')}
+                                        >
+                                            <div className="flex flex-col items-center gap-2">
+                                                <ImageIcon size={24} className="text-white/20 group-hover:text-white/40 transition-colors" />
+                                                <span className="text-[7px] font-black text-white/20 uppercase tracking-[0.2em]">{slot.id}</span>
+                                            </div>
+                                            {slot.locked && (
+                                                <div className="absolute top-1 right-1 text-white/30"><Lock size={10} /></div>
+                                            )}
+                                            {selectedSlotId === slot.id && (
+                                                <>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); deleteSlot(slot.id); }}
+                                                        className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-lg z-[100]"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                    </button>
+                                                    {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
+                                                        <div
+                                                            key={type}
+                                                            className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[110] cursor-${type}-resize hover:scale-125 transition-transform`}
+                                                            style={{
+                                                                top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
+                                                                left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
+                                                                marginTop: type === 'e' || type === 'w' ? -6 : 0,
+                                                                marginLeft: type === 'n' || type === 's' ? -6 : 0,
+                                                            }}
+                                                            onMouseDown={(e) => startResize(e, slot.id, type, slot.x, slot.y, slot.width, slot.height)}
+                                                        />
+                                                    ))}
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                }
 
-                                {/* Stickers */}
-                                {[...(template.stickers || [])].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((stk) => (
-                                    <div
-                                        key={stk.id}
-                                        className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing group ${selectedStickerId === stk.id ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent' : ''}`}
-                                        style={{
-                                            left: `${stk.x}%`,
-                                            top: `${stk.y}%`,
-                                            width: stk.width,
-                                            height: (stk.height || 0) > 0 ? stk.height : 'auto',
-                                            transform: `translate(-50%, -50%) rotate(${stk.rotation}deg) scaleX(${stk.flipX ? -1 : 1}) scaleY(${stk.flipY ? -1 : 1})`,
-                                            zIndex: (550 + (stk.zIndex || 0)),
-                                            opacity: stk.opacity ?? 1,
-                                            overflow: (stk.height || 0) > 0 ? 'hidden' : 'visible',
-                                        }}
-                                        onMouseDown={(e) => { 
-                                            e.stopPropagation(); 
-                                            setSelectedStickerId(stk.id); 
-                                            setSelectedTextId(null); 
-                                            setSelectedSlotId(null);
-                                            setActiveTab('stickers');
-                                            startDrag(e, stk.id, stk.x, stk.y); 
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
-                                        onContextMenu={(e) => openContextMenu(e, stk.id, 'sticker')}
-                                    >
-                                        <Image 
-                                            src={stk.src} alt="" width={stk.width} height={(stk.height || 0) > 0 ? stk.height : stk.width} 
-                                            className={`w-full ${(stk.height || 0) > 0 ? 'h-full object-cover' : 'h-full object-contain'}`}
-                                            style={(stk.height || 0) > 0 ? { objectPosition: `${50 + (stk.cropX || 0)}% ${50 + (stk.cropY || 0)}%` } : undefined}
-                                            unoptimized 
-                                            draggable={false}
-                                        />
-                                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-neutral-900 px-2 py-1 rounded text-[7px] font-black text-white uppercase tracking-tighter">Layer: Asset</div>
-                                        
-                                        {selectedStickerId === stk.id && (
-                                            <>
-                                                {/* Resize Handles */}
-                                                {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
-                                                    <div 
-                                                        key={type}
-                                                        className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[120] cursor-${type}-resize shadow-lg hover:scale-125 transition-transform`}
-                                                        style={{
-                                                            top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
-                                                            left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
-                                                            transform: 'translate(-0%, -0%)',
-                                                            marginTop: type === 'e' || type === 'w' ? -6 : 0,
-                                                            marginLeft: type === 'n' || type === 's' ? -6 : 0,
-                                                        }}
-                                                        onMouseDown={(e) => startResize(e, stk.id, type, stk.x, stk.y, stk.width / (template.width / 100), 0)}
-                                                    />
-                                                ))}
-                                            </>
-                                        )}
-                                    </div>
-                                ))}
+                                if (item.type === 'sticker') {
+                                    const stk = item.data;
+                                    return (
+                                        <div
+                                            key={stk.id}
+                                            className={`absolute pointer-events-auto group ${stk.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedStickerId === stk.id ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent' : ''}`}
+                                            style={{
+                                                left: `${stk.x}%`,
+                                                top: `${stk.y}%`,
+                                                width: stk.width,
+                                                height: (stk.height || 0) > 0 ? stk.height : 'auto',
+                                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg) scaleX(${stk.flipX ? -1 : 1}) scaleY(${stk.flipY ? -1 : 1})`,
+                                                zIndex: item.zIndex,
+                                                opacity: stk.opacity ?? 1,
+                                                overflow: (stk.height || 0) > 0 ? 'hidden' : 'visible',
+                                            }}
+                                            onMouseDown={stk.locked ? undefined : (e) => {
+                                                e.stopPropagation();
+                                                setSelectedStickerId(stk.id);
+                                                setSelectedTextId(null);
+                                                setSelectedSlotId(null);
+                                                setActiveTab('stickers');
+                                                startDrag(e, stk.id, stk.x, stk.y);
+                                            }}
+                                            onClick={(e) => { e.stopPropagation(); setSelectedStickerId(stk.id); setSelectedTextId(null); setSelectedSlotId(null); setActiveTab('stickers'); }}
+                                            onContextMenu={(e) => openContextMenu(e, stk.id, 'sticker')}
+                                        >
+                                            {stk.locked && (
+                                                <div className="absolute top-0 right-0 text-white/40 z-10"><Lock size={10} /></div>
+                                            )}
+                                            <Image
+                                                src={stk.src} alt="" width={stk.width} height={(stk.height || 0) > 0 ? stk.height : stk.width}
+                                                className={`w-full ${(stk.height || 0) > 0 ? 'h-full object-cover' : 'h-full object-contain'}`}
+                                                style={(stk.height || 0) > 0 ? { objectPosition: `${50 + (stk.cropX || 0)}% ${50 + (stk.cropY || 0)}%` } : undefined}
+                                                unoptimized
+                                                draggable={false}
+                                            />
+                                            {selectedStickerId === stk.id && (
+                                                <>
+                                                    {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
+                                                        <div
+                                                            key={type}
+                                                            className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[120] cursor-${type}-resize shadow-lg hover:scale-125 transition-transform`}
+                                                            style={{
+                                                                top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
+                                                                left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
+                                                                marginTop: type === 'e' || type === 'w' ? -6 : 0,
+                                                                marginLeft: type === 'n' || type === 's' ? -6 : 0,
+                                                            }}
+                                                            onMouseDown={(e) => startResize(e, stk.id, type, stk.x, stk.y, stk.width / (template.width / 100), 0)}
+                                                        />
+                                                    ))}
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                }
 
-                                {/* Text Elements */}
-                                {[...(template.textElements || [])].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((txt) => (
+                                // text
+                                const txt = item.data;
+                                return (
                                     <div
                                         key={txt.id}
-                                        className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing px-2 py-1 group ${selectedTextId === txt.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''}`}
+                                        className={`absolute pointer-events-auto px-2 py-1 group ${txt.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedTextId === txt.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''}`}
                                         style={{
                                             left: `${txt.x}%`,
                                             top: `${txt.y}%`,
@@ -2189,95 +2587,43 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             letterSpacing: `${txt.letterSpacing}px`,
                                             textShadow: txt.textShadow,
                                             opacity: txt.opacity,
-                                            zIndex: (550 + (txt.zIndex || 0)),
+                                            zIndex: item.zIndex,
+                                            WebkitTextStroke: txt.textStrokeWidth ? `${txt.textStrokeWidth}px ${txt.textStroke || '#000000'}` : undefined,
                                         }}
-                                        onMouseDown={(e) => { 
-                                            e.stopPropagation(); 
-                                            setSelectedTextId(txt.id); 
-                                            setSelectedStickerId(null); 
+                                        onMouseDown={txt.locked ? undefined : (e) => {
+                                            e.stopPropagation();
+                                            setSelectedTextId(txt.id);
+                                            setSelectedStickerId(null);
                                             setSelectedSlotId(null);
                                             setActiveTab('text');
-                                            startDrag(e, txt.id, txt.x, txt.y); 
+                                            startDrag(e, txt.id, txt.x, txt.y);
                                         }}
-                                        onClick={(e) => e.stopPropagation()}
+                                        onClick={(e) => { e.stopPropagation(); setSelectedTextId(txt.id); setSelectedStickerId(null); setSelectedSlotId(null); setActiveTab('text'); }}
                                         onContextMenu={(e) => openContextMenu(e, txt.id, 'text')}
                                     >
-                                        {txt.text}
-                                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-neutral-900 px-2 py-1 rounded text-[7px] font-black text-white uppercase tracking-tighter">Layer: Type</div>
-
+                                        <span style={{ whiteSpace: 'pre-wrap' }}>{txt.text}</span>
+                                        {txt.locked && (
+                                            <div className="absolute top-0 right-0 text-white/40"><Lock size={10} /></div>
+                                        )}
                                         {selectedTextId === txt.id && (
                                             <>
-                                                {/* Resize Handles */}
-                                                {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
-                                                    <div 
+                                                {['e', 'w'].map(type => (
+                                                    <div
                                                         key={type}
                                                         className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[120] cursor-${type}-resize shadow-lg hover:scale-125 transition-transform`}
                                                         style={{
-                                                            top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
-                                                            left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
-                                                            transform: 'translate(-0%, -0%)',
-                                                            marginTop: type === 'e' || type === 'w' ? -6 : 0,
-                                                            marginLeft: type === 'n' || type === 's' ? -6 : 0,
+                                                            top: '50%',
+                                                            left: type === 'w' ? -6 : 'calc(100% - 6px)',
+                                                            transform: 'translateY(-50%)',
                                                         }}
-                                                        onMouseDown={(e) => startResize(e, txt.id, type, txt.x, txt.y, txt.fontSize * 4 / (template.width / 100), 0)}
+                                                        onMouseDown={(e) => startResize(e, txt.id, type, txt.x, txt.y, txt.fontSize, 0)}
                                                     />
                                                 ))}
                                             </>
                                         )}
                                     </div>
-                                ))}
-                            
-                            {/* Text Elements */}
-                            {[...(template.textElements || [])].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)).map((txt) => (
-                                <div
-                                    key={txt.id}
-                                    className={`absolute pointer-events-auto cursor-grab active:cursor-grabbing px-2 py-1 group ${selectedTextId === txt.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''}`}
-                                    style={{
-                                        left: `${txt.x}%`,
-                                        top: `${txt.y}%`,
-                                        transform: `translate(-50%, -50%) rotate(${txt.rotation || 0}deg)`,
-                                        fontSize: txt.fontSize,
-                                        fontFamily: txt.fontFamily,
-                                        color: txt.color,
-                                        fontWeight: txt.fontWeight,
-                                        fontStyle: txt.fontStyle,
-                                        textAlign: txt.textAlign as any,
-                                        letterSpacing: `${txt.letterSpacing}px`,
-                                        textShadow: txt.textShadow,
-                                        opacity: txt.opacity,
-                                        zIndex: (550 + (txt.zIndex || 0)),
-                                    }}
-                                    onMouseDown={(e) => { 
-                                        e.stopPropagation(); 
-                                        setSelectedTextId(txt.id); 
-                                        setSelectedStickerId(null); 
-                                        setSelectedSlotId(null);
-                                        setActiveTab('text');
-                                        startDrag(e, txt.id, txt.x, txt.y); 
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onContextMenu={(e) => openContextMenu(e, txt.id, 'text')}
-                                >
-                                    <span style={{ whiteSpace: 'pre-wrap' }}>{txt.text}</span>
-                                    {selectedTextId === txt.id && (
-                                        <>
-                                            {/* Resize Handle (Font Size) */}
-                                            {['e', 'w'].map(type => (
-                                                <div 
-                                                    key={type}
-                                                    className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[120] cursor-${type}-resize shadow-lg hover:scale-125 transition-transform`}
-                                                    style={{
-                                                        top: '50%',
-                                                        left: type === 'w' ? -6 : 'calc(100% - 6px)',
-                                                        transform: 'translateY(-50%)',
-                                                    }}
-                                                    onMouseDown={(e) => startResize(e, txt.id, type, txt.x, txt.y, txt.fontSize, 0)}
-                                                />
-                                            ))}
-                                        </>
-                                    )}
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
 
                         {/* Shortcuts */}
