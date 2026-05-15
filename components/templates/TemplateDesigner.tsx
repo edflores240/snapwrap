@@ -2309,6 +2309,137 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                 </section>
                             )}
 
+                            {/* ── Shapes ── */}
+                            {activeTab === 'shapes' && (
+                                <section className="space-y-6">
+                                    <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Add Shape</h3>
+                                    <div className="grid grid-cols-5 gap-2">
+                                        {([
+                                            { type: 'rect' as const,     icon: Square,    label: 'Rect'     },
+                                            { type: 'circle' as const,   icon: Circle,    label: 'Circle'   },
+                                            { type: 'triangle' as const, icon: Triangle,  label: 'Triangle' },
+                                            { type: 'star' as const,     icon: StarIcon,  label: 'Star'     },
+                                            { type: 'line' as const,     icon: Minus,     label: 'Line'     },
+                                        ]).map(({ type, icon: Icon, label }) => (
+                                            <button
+                                                key={type}
+                                                onClick={() => addShape(type)}
+                                                className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-white/5 bg-neutral-900 hover:border-white/20 hover:bg-white/5 transition-all text-neutral-400 hover:text-white"
+                                            >
+                                                <Icon size={18} />
+                                                <span className="text-[7px] font-black uppercase tracking-widest">{label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* Shape properties */}
+                                    {selectedShapeId && (() => {
+                                        const shp = (template.shapes || []).find(s => s.id === selectedShapeId);
+                                        if (!shp) return null;
+                                        return (
+                                            <div className="space-y-5 pt-4 border-t border-white/5">
+                                                <h3 className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">{shp.shapeType.toUpperCase()} Properties</h3>
+
+                                                {/* Fill color */}
+                                                {shp.shapeType !== 'line' && (
+                                                    <div className="space-y-2">
+                                                        <label className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">Fill Color</label>
+                                                        <div className="flex items-center gap-2">
+                                                            <input type="color" value={shp.fillColor} onChange={e => updateShape(shp.id, { fillColor: e.target.value })}
+                                                                className="w-10 h-8 rounded cursor-pointer bg-transparent border-0 outline-none" />
+                                                            <input type="text" value={shp.fillColor} onChange={e => updateShape(shp.id, { fillColor: e.target.value })}
+                                                                className="flex-1 bg-neutral-900 border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white font-mono" />
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Stroke / Line color */}
+                                                <div className="space-y-2">
+                                                    <label className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">
+                                                        {shp.shapeType === 'line' ? 'Line Color' : 'Stroke'}
+                                                    </label>
+                                                    <div className="flex items-center gap-2">
+                                                        <input type="color" value={shp.strokeColor} onChange={e => updateShape(shp.id, { strokeColor: e.target.value })}
+                                                            className="w-10 h-8 rounded cursor-pointer bg-transparent border-0 outline-none" />
+                                                        <input type="range" min={shp.shapeType === 'line' ? 1 : 0} max={shp.shapeType === 'line' ? 40 : 20} value={shp.strokeWidth}
+                                                            onChange={e => updateShape(shp.id, { strokeWidth: +e.target.value })}
+                                                            className="flex-1" />
+                                                        <span className="text-[9px] text-white w-6 text-right">{shp.strokeWidth}</span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Corner radius (rect only) */}
+                                                {shp.shapeType === 'rect' && (
+                                                    <div className="space-y-2">
+                                                        <label className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">Corner Radius</label>
+                                                        <div className="flex items-center gap-3">
+                                                            <input type="range" min={0} max={200} value={shp.borderRadius} onChange={e => updateShape(shp.id, { borderRadius: +e.target.value })}
+                                                                className="flex-1" />
+                                                            <span className="text-[9px] text-white w-8 text-right">{shp.borderRadius}px</span>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Opacity */}
+                                                <div className="space-y-2">
+                                                    <label className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">Opacity</label>
+                                                    <div className="flex items-center gap-3">
+                                                        <input type="range" min={0} max={1} step={0.01} value={shp.opacity} onChange={e => updateShape(shp.id, { opacity: +e.target.value })}
+                                                            className="flex-1" />
+                                                        <span className="text-[9px] text-white w-8 text-right">{Math.round(shp.opacity * 100)}%</span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Rotation */}
+                                                <div className="space-y-2">
+                                                    <label className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">Rotation</label>
+                                                    <div className="flex items-center gap-3">
+                                                        <input type="range" min={-180} max={180} value={shp.rotation} onChange={e => updateShape(shp.id, { rotation: +e.target.value })}
+                                                            className="flex-1" />
+                                                        <span className="text-[9px] text-white w-10 text-right">{shp.rotation}°</span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Size */}
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="space-y-1">
+                                                        <label className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">Width %</label>
+                                                        <input type="number" min={2} max={100} value={Math.round(shp.width)}
+                                                            onChange={e => updateShape(shp.id, { width: +e.target.value })}
+                                                            className="w-full bg-neutral-900 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-white" />
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <label className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">Height %</label>
+                                                        <input type="number" min={2} max={100} value={Math.round(shp.height)}
+                                                            onChange={e => updateShape(shp.id, { height: +e.target.value })}
+                                                            className="w-full bg-neutral-900 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-white" />
+                                                    </div>
+                                                </div>
+
+                                                {/* Alignment */}
+                                                <div className="space-y-2">
+                                                    <label className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">Align</label>
+                                                    <div className="grid grid-cols-3 gap-1">
+                                                        <button onClick={() => alignElement(shp.id, 'shape', 'left')}   className="py-1.5 rounded bg-neutral-900 border border-white/5 hover:border-white/20 text-neutral-400 hover:text-white transition-all flex items-center justify-center"><AlignStartVertical size={12} /></button>
+                                                        <button onClick={() => alignElement(shp.id, 'shape', 'centerH')} className="py-1.5 rounded bg-neutral-900 border border-white/5 hover:border-white/20 text-neutral-400 hover:text-white transition-all flex items-center justify-center"><AlignCenterVertical size={12} /></button>
+                                                        <button onClick={() => alignElement(shp.id, 'shape', 'right')}  className="py-1.5 rounded bg-neutral-900 border border-white/5 hover:border-white/20 text-neutral-400 hover:text-white transition-all flex items-center justify-center"><AlignEndVertical size={12} /></button>
+                                                        <button onClick={() => alignElement(shp.id, 'shape', 'top')}    className="py-1.5 rounded bg-neutral-900 border border-white/5 hover:border-white/20 text-neutral-400 hover:text-white transition-all flex items-center justify-center"><AlignStartHorizontal size={12} /></button>
+                                                        <button onClick={() => alignElement(shp.id, 'shape', 'centerV')} className="py-1.5 rounded bg-neutral-900 border border-white/5 hover:border-white/20 text-neutral-400 hover:text-white transition-all flex items-center justify-center"><AlignCenterHorizontal size={12} /></button>
+                                                        <button onClick={() => alignElement(shp.id, 'shape', 'bottom')} className="py-1.5 rounded bg-neutral-900 border border-white/5 hover:border-white/20 text-neutral-400 hover:text-white transition-all flex items-center justify-center"><AlignEndHorizontal size={12} /></button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Delete */}
+                                                <button onClick={() => deleteShape(shp.id)}
+                                                    className="w-full py-2 rounded-xl border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-all text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2">
+                                                    <Trash2 size={12} /> Delete Shape
+                                                </button>
+                                            </div>
+                                        );
+                                    })()}
+                                </section>
+                            )}
+
                             {/* ── Layers ── */}
                             {activeTab === 'layers' && (() => {
                                 const allElements = [
