@@ -66,6 +66,7 @@ interface PhotoSlot {
     zIndex?: number;
     locked?: boolean;
     opacity?: number;
+    borderRadius?: number; // px override; falls back to global template.borderRadius
 }
 
 export interface ShapeElement {
@@ -1841,6 +1842,13 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                         </div>
                                                         <input type="range" min={10} max={100} value={Math.round((template.slots.find(s => s.id === selectedSlotId)?.opacity ?? 1) * 100)} onChange={(e) => updateSlot(selectedSlotId, { opacity: +e.target.value / 100 })} onMouseUp={() => pushToHistory(templateRef.current)} className="w-full accent-blue-500" />
                                                     </div>
+                                                    <div className="space-y-1.5">
+                                                        <div className="flex justify-between">
+                                                            <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Corner Radius</label>
+                                                            <span className="text-[9px] font-black text-white">{template.slots.find(s => s.id === selectedSlotId)?.borderRadius ?? template.borderRadius}px</span>
+                                                        </div>
+                                                        <input type="range" min={0} max={120} value={template.slots.find(s => s.id === selectedSlotId)?.borderRadius ?? template.borderRadius} onChange={(e) => updateSlot(selectedSlotId, { borderRadius: +e.target.value })} onMouseUp={() => pushToHistory(templateRef.current)} className="w-full accent-blue-500" />
+                                                    </div>
                                                 </div>
 
                                                 <div className="space-y-3 pt-4 border-t border-white/5">
@@ -2699,7 +2707,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 height: `${slot.height}%`,
                                                 transform: `rotate(${slot.rotation || 0}deg)`,
                                                 backgroundColor: 'rgba(0,0,0,0.4)',
-                                                borderRadius: Math.min(template.borderRadius / 2, 12),
+                                                borderRadius: slot.borderRadius ?? template.borderRadius,
                                                 zIndex: item.zIndex,
                                                 opacity: slot.opacity ?? 1,
                                             }}

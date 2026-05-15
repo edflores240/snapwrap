@@ -117,7 +117,7 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                                 width={sw}
                                                 height={sh}
                                                 fill="#000"
-                                                cornerRadius={template.borderRadius * scale}
+                                                cornerRadius={(s.borderRadius ?? template.borderRadius) * scale}
                                                 stroke={template.borderColor}
                                                 strokeWidth={template.borderWidth * scale}
                                             />
@@ -126,7 +126,7 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                                     image={img as any}
                                                     width={sw}
                                                     height={sh}
-                                                    cornerRadius={template.borderRadius * scale}
+                                                    cornerRadius={(s.borderRadius ?? template.borderRadius) * scale}
                                                     crop={{
                                                         x: 0,
                                                         y: 0,
