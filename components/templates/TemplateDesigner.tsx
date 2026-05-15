@@ -1394,7 +1394,15 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         const file = e.target.files?.[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = (ev) => setBackgroundImage(ev.target?.result as string);
+        reader.onload = (ev) => {
+            const dataUrl = ev.target?.result as string;
+            setBackgroundImage(dataUrl);
+            setTemplate(prev => {
+                const next = { ...prev, backgroundImage: dataUrl };
+                pushToHistory(next);
+                return next;
+            });
+        };
         reader.readAsDataURL(file);
     };
 
@@ -1402,8 +1410,8 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         if (isSaving) return;
         setIsSaving(true);
         try {
-            let finalTemplate = { ...template };
-            
+            let finalTemplate = { ...template, backgroundImage: backgroundImage ?? undefined };
+
             // Generate snapshots if visualizer is ready
             if (visualizerRef.current) {
                 const snapshots = await visualizerRef.current.getSnapshot();
@@ -1414,7 +1422,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
             onSave(finalTemplate);
         } catch (error) {
             console.error('Error generating snapshots:', error);
-            onSave(template); // Fallback to basic save
+            onSave({ ...template, backgroundImage: backgroundImage ?? undefined });
         } finally {
             setIsSaving(false);
         }
