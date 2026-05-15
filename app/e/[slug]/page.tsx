@@ -110,6 +110,13 @@ export default function PublicBoothPage() {
     const [dragStart, setDragStart] = useState({ x: 0, y: 0, photoX: 0, photoY: 0 });
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, index: number } | null>(null);
 
+    // Print layout picker state
+    type PrintLayout = '1up' | '2up' | '4up';
+    const [showPrintPicker, setShowPrintPicker] = useState(false);
+    const [selectedPrintLayout, setSelectedPrintLayout] = useState<PrintLayout>('2up');
+    const [printCompositeUrl, setPrintCompositeUrl] = useState<string | null>(null);
+    const [generatingPrint, setGeneratingPrint] = useState(false);
+
     // Load Devices
     useEffect(() => {
         const getDevices = async () => {
@@ -448,20 +455,52 @@ export default function PublicBoothPage() {
         }
     };
 
-    const handlePrintAndSave = async () => {
+    const handleOpenPrintPicker = async () => {
+        setGeneratingPrint(true);
+        setShowPrintPicker(true);
         const compositeDataUrl = await generateComposite();
-        if (!compositeDataUrl) return;
-
-        // Print first (better UX, doesn't wait for upload)
-        executePrint(compositeDataUrl);
-
-        // Then save/upload for QR
-        const url = await generateAndSaveComposite(compositeDataUrl);
-        if (url) {
-            setDownloadUrl(url);
-            setStep('qr');
-        }
+        setPrintCompositeUrl(compositeDataUrl);
+        setGeneratingPrint(false);
     };
+
+    const generatePrintSheet = async (compositeUrl: string, layout: PrintLayout): Promise<string> => {
+        if (layout === '1up') return compositeUrl;
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const el = new window.Image();
+            el.onload = () => resolve(el);
+            el.onerror = reject;
+            el.src = compositeUrl;
+        });
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d')!;
+        const gap = 24;
+        if (layout === '2up') {
+            canvas.width = img.width * 2 + gap;
+            canvas.height = img.height;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, img.width, img.height);
+            ctx.drawImage(img, img.width + gap, 0, img.width, img.height);
+        } else {
+            canvas.width = img.width * 2 + gap;
+            canvas.height = img.height * 2 + gap;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, img.width, img.height);
+            ctx.drawImage(img, img.width + gap, 0, img.width, img.height);
+            ctx.drawImage(img, 0, img.height + gap, img.width, img.height);
+            ctx.drawImage(img, img.width + gap, img.height + gap, img.width, img.height);
+        }
+        return canvas.toDataURL('image/jpeg', 0.95);
+    };
+
+    const handleConfirmPrint = async () => {
+        if (!printCompositeUrl) return;
+        const sheetUrl = await generatePrintSheet(printCompositeUrl, selectedPrintLayout);
+        executePrint(sheetUrl);
+        setShowPrintPicker(false);
+    };
+
 
     const generateAndSaveComposite = async (existingDataUrl?: string) => {
         if (!selectedTemplate || !event) return null;
@@ -1547,7 +1586,7 @@ export default function PublicBoothPage() {
                                     {uploadingComposite ? '...' : 'Digital Copy'}
                                 </button>
                                 <button
-                                    onClick={handlePrintAndSave}
+                                    onClick={handleOpenPrintPicker}
                                     disabled={uploadingComposite}
                                     className="px-10 py-3 rounded-xl text-white font-black shadow-2xl hover:shadow-indigo-500/40 transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3"
                                     style={{ background: themeGradient, boxShadow: themeShadow }}
@@ -1558,6 +1597,109 @@ export default function PublicBoothPage() {
                             </div>
 
 
+                        </div>
+                    </div>
+                )}
+
+                {/* ── PRINT LAYOUT PICKER OVERLAY ──────────────────────── */}
+                {showPrintPicker && selectedTemplate && (
+                    <div className="fixed inset-0 z-[300] flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(16px)' }}>
+                        <div className="w-full max-w-2xl bg-neutral-950 border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
+
+                            {/* Header */}
+                            <div className="px-8 pt-8 pb-6 border-b border-white/5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h2 className="text-2xl font-black text-white uppercase tracking-tight">Print Layout</h2>
+                                        <p className="text-[11px] font-semibold text-neutral-500 mt-1 uppercase tracking-widest">Choose how many copies to print on one sheet</p>
+                                    </div>
+                                    <button onClick={() => setShowPrintPicker(false)} className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-all">
+                                        <X size={16} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Layout Cards */}
+                            <div className="p-8">
+                                {generatingPrint ? (
+                                    <div className="flex flex-col items-center justify-center py-12 gap-4">
+                                        <div className="w-8 h-8 border-2 border-white/10 border-t-white rounded-full animate-spin" />
+                                        <span className="text-[11px] font-black text-neutral-500 uppercase tracking-widest">Generating preview…</span>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {([
+                                            { id: '1up' as PrintLayout, label: 'Single', copies: '1 copy', desc: 'Full sheet' },
+                                            { id: '2up' as PrintLayout, label: 'Duo',    copies: '2 copies', desc: 'Side by side — cut to share' },
+                                            { id: '4up' as PrintLayout, label: 'Quad',   copies: '4 copies', desc: '2×2 grid — wallet size' },
+                                        ]).map((layout) => {
+                                            const ar = selectedTemplate.width / selectedTemplate.height;
+                                            const isSelected = selectedPrintLayout === layout.id;
+                                            return (
+                                                <button
+                                                    key={layout.id}
+                                                    onClick={() => setSelectedPrintLayout(layout.id)}
+                                                    className={`flex flex-col rounded-2xl border-2 overflow-hidden transition-all text-left ${isSelected ? 'border-white scale-[1.02] shadow-xl' : 'border-white/10 hover:border-white/30'}`}
+                                                >
+                                                    {/* Visual preview */}
+                                                    <div className="bg-neutral-900 p-3 flex items-center justify-center" style={{ minHeight: 140 }}>
+                                                        {layout.id === '1up' && (
+                                                            <div className="w-full rounded overflow-hidden shadow-md" style={{ aspectRatio: ar }}>
+                                                                {printCompositeUrl
+                                                                    ? <img src={printCompositeUrl} className="w-full h-full object-cover" alt="" />
+                                                                    : <div className="w-full h-full bg-white/10 animate-pulse" />}
+                                                            </div>
+                                                        )}
+                                                        {layout.id === '2up' && (
+                                                            <div className="flex gap-1.5 w-full">
+                                                                {[0,1].map(i => (
+                                                                    <div key={i} className="flex-1 rounded overflow-hidden shadow-md" style={{ aspectRatio: ar }}>
+                                                                        {printCompositeUrl
+                                                                            ? <img src={printCompositeUrl} className="w-full h-full object-cover" alt="" />
+                                                                            : <div className="w-full h-full bg-white/10 animate-pulse" />}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {layout.id === '4up' && (
+                                                            <div className="grid grid-cols-2 gap-1.5 w-full">
+                                                                {[0,1,2,3].map(i => (
+                                                                    <div key={i} className="rounded overflow-hidden shadow-md" style={{ aspectRatio: ar }}>
+                                                                        {printCompositeUrl
+                                                                            ? <img src={printCompositeUrl} className="w-full h-full object-cover" alt="" />
+                                                                            : <div className="w-full h-full bg-white/10 animate-pulse" />}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {/* Label */}
+                                                    <div className={`px-4 py-3 transition-colors ${isSelected ? 'bg-white' : 'bg-neutral-900'}`}>
+                                                        <div className={`text-[11px] font-black uppercase tracking-widest ${isSelected ? 'text-neutral-900' : 'text-white'}`}>{layout.label}</div>
+                                                        <div className={`text-[9px] font-semibold mt-0.5 ${isSelected ? 'text-neutral-500' : 'text-neutral-600'}`}>{layout.copies} · {layout.desc}</div>
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Footer */}
+                            <div className="px-8 pb-8 flex items-center justify-between gap-4">
+                                <button onClick={() => setShowPrintPicker(false)} className="px-6 py-3 rounded-xl border border-white/10 text-neutral-400 hover:text-white hover:border-white/30 transition-all text-sm font-semibold">
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleConfirmPrint}
+                                    disabled={!printCompositeUrl || generatingPrint}
+                                    className="flex items-center gap-3 px-10 py-3 rounded-xl text-white font-black shadow-2xl hover:scale-105 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                    style={{ background: themeGradient, boxShadow: themeShadow }}
+                                >
+                                    <Printer size={16} />
+                                    Print Now
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}
