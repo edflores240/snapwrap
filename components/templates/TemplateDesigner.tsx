@@ -67,6 +67,7 @@ interface PhotoSlot {
     locked?: boolean;
     opacity?: number;
     borderRadius?: number; // px override; falls back to global template.borderRadius
+    clipShape?: 'circle';  // if set, renders as ellipse
 }
 
 export interface ShapeElement {
@@ -1855,7 +1856,25 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                             <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Corner Radius</label>
                                                             <span className="text-[9px] font-black text-white">{template.slots.find(s => s.id === selectedSlotId)?.borderRadius ?? template.borderRadius}px</span>
                                                         </div>
-                                                        <input type="range" min={0} max={120} value={template.slots.find(s => s.id === selectedSlotId)?.borderRadius ?? template.borderRadius} onChange={(e) => updateSlot(selectedSlotId, { borderRadius: +e.target.value })} onMouseUp={() => pushToHistory(templateRef.current)} className="w-full accent-blue-500" />
+                                                        <input type="range" min={0} max={120} value={template.slots.find(s => s.id === selectedSlotId)?.borderRadius ?? template.borderRadius} onChange={(e) => updateSlot(selectedSlotId, { borderRadius: +e.target.value })} onMouseUp={() => pushToHistory(templateRef.current)} className="w-full accent-blue-500" disabled={template.slots.find(s => s.id === selectedSlotId)?.clipShape === 'circle'} />
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Frame Shape</label>
+                                                        <div className="flex gap-2">
+                                                            {(['rect', 'circle'] as const).map((shape) => {
+                                                                const active = shape === 'circle'
+                                                                    ? template.slots.find(s => s.id === selectedSlotId)?.clipShape === 'circle'
+                                                                    : !template.slots.find(s => s.id === selectedSlotId)?.clipShape;
+                                                                return (
+                                                                    <button key={shape}
+                                                                        onClick={() => updateSlot(selectedSlotId, { clipShape: shape === 'circle' ? 'circle' : undefined })}
+                                                                        className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${active ? 'bg-blue-500/20 border-blue-500 text-blue-400' : 'bg-white/5 border-white/10 text-neutral-500 hover:border-white/20'}`}
+                                                                    >
+                                                                        {shape === 'rect' ? '▭ Rect' : '◯ Circle'}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -2715,7 +2734,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 height: `${slot.height}%`,
                                                 transform: `rotate(${slot.rotation || 0}deg)`,
                                                 backgroundColor: 'rgba(0,0,0,0.4)',
-                                                borderRadius: slot.borderRadius ?? template.borderRadius,
+                                                borderRadius: slot.clipShape === 'circle' ? '50%' : (slot.borderRadius ?? template.borderRadius),
                                                 zIndex: item.zIndex,
                                                 opacity: slot.opacity ?? 1,
                                             }}

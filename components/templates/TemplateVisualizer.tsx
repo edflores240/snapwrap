@@ -111,13 +111,23 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                     const sh = (s.height / 100) * height;
                                     const i = template.slots.indexOf(s);
                                     const img = photoImages[i];
+                                    const isCircleSlot = s.clipShape === 'circle';
+                                    const cornerR = isCircleSlot ? 0 : (s.borderRadius ?? template.borderRadius) * scale;
                                     return (
-                                        <Group key={s.id} x={(s.x / 100) * width} y={(s.y / 100) * height} rotation={s.rotation}>
+                                        <Group
+                                            key={s.id}
+                                            x={(s.x / 100) * width}
+                                            y={(s.y / 100) * height}
+                                            rotation={s.rotation}
+                                            clipFunc={isCircleSlot ? (ctx) => {
+                                                ctx.ellipse(sw / 2, sh / 2, sw / 2, sh / 2, 0, 0, Math.PI * 2);
+                                            } : undefined}
+                                        >
                                             <Rect
                                                 width={sw}
                                                 height={sh}
                                                 fill="#000"
-                                                cornerRadius={(s.borderRadius ?? template.borderRadius) * scale}
+                                                cornerRadius={cornerR}
                                                 stroke={template.borderColor}
                                                 strokeWidth={template.borderWidth * scale}
                                             />
@@ -126,7 +136,7 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                                     image={img as any}
                                                     width={sw}
                                                     height={sh}
-                                                    cornerRadius={(s.borderRadius ?? template.borderRadius) * scale}
+                                                    cornerRadius={cornerR}
                                                     crop={{
                                                         x: 0,
                                                         y: 0,
