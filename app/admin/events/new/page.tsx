@@ -29,6 +29,8 @@ export default function NewEventPage() {
 
         try {
             const { supabase } = await import('@/lib/supabase');
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Not authenticated');
 
             const { error } = await supabase
                 .from('events')
@@ -39,7 +41,8 @@ export default function NewEventPage() {
                         date: formData.date,
                         description: formData.description,
                         is_active: true,
-                        config: {}
+                        config: {},
+                        user_id: user.id,
                     }
                 ]);
 

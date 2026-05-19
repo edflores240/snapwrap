@@ -224,11 +224,15 @@ export default function EventDetailPage() {
 
     const fetchEvent = async () => {
         try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) { router.push('/admin/login'); return; }
+
             const [eventRes, photosRes] = await Promise.all([
                 supabase
                     .from('events')
                     .select('*')
                     .eq('id', params.id as string)
+                    .eq('user_id', user.id)
                     .single(),
                 supabase
                     .from('photos')
@@ -265,7 +269,8 @@ export default function EventDetailPage() {
                 boothSettings,
                 publicPage: gallerySettings 
             };
-            const { error } = await supabase.from('events').update({ config }).eq('id', event.id);
+            const { data: { user } } = await supabase.auth.getUser();
+            const { error } = await supabase.from('events').update({ config }).eq('id', event.id).eq('user_id', user?.id ?? '');
             if (error) throw error;
             setEvent({ ...event, config });
         } catch (err) {

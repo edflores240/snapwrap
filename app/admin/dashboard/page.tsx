@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { useAdmin } from '../layout';
 import { 
     Calendar, 
     Camera, 
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 
 export default function AdminDashboard() {
+    const { profile } = useAdmin();
     const [stats, setStats] = useState({ events: 0, photos: 0, storage: '0 MB' });
     const [recentPhotos, setRecentPhotos] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -27,15 +29,19 @@ export default function AdminDashboard() {
 
     const fetchData = async () => {
         try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+
             const [
                 { count: eventsCount },
                 { count: photosCount },
                 { data: activity }
             ] = await Promise.all([
-                supabase.from('events').select('*', { count: 'exact', head: true }),
-                supabase.from('photos').select('*', { count: 'exact', head: true }),
+                supabase.from('events').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
+                supabase.from('photos').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
                 supabase.from('photos')
                     .select('id, created_at, final_url, image_url, events(name)')
+                    .eq('user_id', user.id)
                     .order('created_at', { ascending: false })
                     .limit(5)
             ]);
@@ -73,7 +79,9 @@ export default function AdminDashboard() {
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div>
-                    <h1 className="text-4xl font-bold tracking-tight text-neutral-900 mb-2">Overview</h1>
+                    <h1 className="text-4xl font-bold tracking-tight text-neutral-900 mb-2">
+                        {profile?.business_name ? `Welcome, ${profile.business_name}` : 'Overview'}
+                    </h1>
                     <p className="text-neutral-500 font-medium">Monitoring your photo booth ecosystem.</p>
                 </div>
                 <div className="flex items-center gap-3">

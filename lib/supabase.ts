@@ -7,5 +7,18 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
+// Browser / client-side singleton (uses anon key, respects user session)
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// Server-side client using the service role key — bypasses RLS.
+// Only use in API route handlers (never expose to the browser).
+export function createServerClient() {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) {
+    throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY environment variable');
+  }
+  return createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false },
+  });
+}
 

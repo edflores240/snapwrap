@@ -30,9 +30,13 @@ export default function EventsPage() {
 
     const fetchEvents = async () => {
         try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+
             const { data, error } = await supabase
                 .from('events')
                 .select('id, name, slug, date, is_active, created_at, config->boothSettings')
+                .eq('user_id', user.id)
                 .order('created_at', { ascending: false });
 
             if (error) throw error;
@@ -48,7 +52,9 @@ export default function EventsPage() {
         if (!confirm('Are you sure you want to delete this event? This cannot be undone.')) return;
 
         try {
-            const { error } = await supabase.from('events').delete().eq('id', id);
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            const { error } = await supabase.from('events').delete().eq('id', id).eq('user_id', user.id);
             if (error) throw error;
             setEvents(events.filter(e => e.id !== id));
         } catch (error) {
