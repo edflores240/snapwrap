@@ -8,6 +8,9 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Playfair_Display } from 'next/font/google';
+
+const playfair = Playfair_Display({ subsets: ['latin'] });
 import { 
     ChevronLeft, 
     Calendar, 
@@ -176,6 +179,12 @@ export default function EventDetailPage() {
     });
     const [savingBooth, setSavingBooth] = useState(false);
     const [boothPhotos, setBoothPhotos] = useState<any[]>([]);
+    const [photoCount, setPhotoCount] = useState<number | null>(null);
+    const [photosLoaded, setPhotosLoaded] = useState(false);
+    const [loadingPhotos, setLoadingPhotos] = useState(false);
+    const [photoPage, setPhotoPage] = useState(0);
+    const [hasMorePhotos, setHasMorePhotos] = useState(true);
+    const PAGE_SIZE = 24;
 
     // Gallery customization state
     const [gallerySettings, setGallerySettings] = useState({
@@ -217,17 +226,22 @@ export default function EventDetailPage() {
     const [isConfirmingBulkDelete, setIsConfirmingBulkDelete] = useState(false);
 
     useEffect(() => {
-        if (params.id) {
-            fetchEvent();
-        }
+        if (params.id) fetchEvent();
     }, [params.id]);
+
+    // Lazy-load photos when gallery tab is first opened
+    useEffect(() => {
+        if (activeTab === 'gallery' && !photosLoaded && params.id) {
+            fetchPhotos(0, true);
+        }
+    }, [activeTab]);
 
     const fetchEvent = async () => {
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) { router.push('/admin/login'); return; }
 
-            const [eventRes, photosRes] = await Promise.all([
+            const [{ data, error }, { count }] = await Promise.all([
                 supabase
                     .from('events')
                     .select('*')
@@ -236,27 +250,47 @@ export default function EventDetailPage() {
                     .single(),
                 supabase
                     .from('photos')
-                    .select('*')
-                    .eq('event_id', params.id as string)
-                    .order('created_at', { ascending: false })
+                    .select('*', { count: 'exact', head: true })
+                    .eq('event_id', params.id as string),
             ]);
 
-            if (eventRes.error) throw eventRes.error;
-            if (photosRes.error) throw photosRes.error;
+            if (error) throw error;
 
-            setEvent(eventRes.data);
-            if (photosRes.data) setBoothPhotos(photosRes.data);
-
-            // Sync settings
-            if (eventRes.data.config?.templates) setTemplates(eventRes.data.config.templates);
-            if (eventRes.data.config?.boothSettings) setBoothSettings(prev => ({ ...prev, ...eventRes.data.config.boothSettings }));
-            if (eventRes.data.config?.publicPage) setGallerySettings(prev => ({ ...prev, ...eventRes.data.config.publicPage }));
+            setEvent(data);
+            setPhotoCount(count ?? 0);
+            if (data.config?.templates) setTemplates(data.config.templates);
+            if (data.config?.boothSettings) setBoothSettings(prev => ({ ...prev, ...data.config.boothSettings }));
+            if (data.config?.publicPage) setGallerySettings(prev => ({ ...prev, ...data.config.publicPage }));
 
         } catch (error) {
-            console.error('Error fetching event data:', error);
+            console.error('Error fetching event:', error);
             router.push('/admin/events');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchPhotos = async (page: number, reset = false) => {
+        if (!params.id) return;
+        setLoadingPhotos(true);
+        try {
+            const { data, error } = await supabase
+                .from('photos')
+                .select('id, created_at, image_url, is_published')
+                .eq('event_id', params.id as string)
+                .order('created_at', { ascending: false })
+                .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+            if (error) throw error;
+
+            setBoothPhotos(prev => reset ? (data ?? []) : [...prev, ...(data ?? [])]);
+            setHasMorePhotos((data?.length ?? 0) === PAGE_SIZE);
+            setPhotoPage(page);
+            setPhotosLoaded(true);
+        } catch (err: any) {
+            console.error('Error fetching photos:', err?.message, '| code:', err?.code, '| details:', err?.details, '| hint:', err?.hint);
+        } finally {
+            setLoadingPhotos(false);
         }
     };
 
@@ -423,7 +457,7 @@ export default function EventDetailPage() {
     if (loading) {
         return (
             <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
-                <div className="w-6 h-6 border-2 border-neutral-200 border-t-neutral-900 rounded-full animate-spin" />
+                <div className="w-6 h-6 border-2 border-neutral-200 border-t-[#2A2724] rounded-full animate-spin" />
                 <p className="text-neutral-400 font-medium animate-pulse">Retrieving Archives...</p>
             </div>
         );
@@ -459,7 +493,7 @@ export default function EventDetailPage() {
             `}} />
             {/* Header: Simplified & Minimal */}
             <header className="space-y-6">
-                <Link href="/admin/events" className="inline-flex items-center gap-2 text-neutral-400 hover:text-neutral-900 transition-colors group">
+                <Link href="/admin/events" className="inline-flex items-center gap-2 text-neutral-400 hover:text-[#2A2724] transition-colors group">
                     <ChevronLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
                     <span className="text-[10px] font-black uppercase tracking-[0.2em]">Archive View</span>
                 </Link>
@@ -467,7 +501,7 @@ export default function EventDetailPage() {
                 <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
                     <div className="space-y-4">
                         <div className="flex items-center gap-4">
-                            <h1 className="text-5xl font-black tracking-tight text-neutral-900">{event.name}</h1>
+                            <h1 className={`text-5xl font-black tracking-tight text-[#2A2724] ${playfair.className}`}>{event.name}</h1>
                             <div 
                                 className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-[0.2em] transition-colors"
                                 style={{ 
@@ -479,7 +513,7 @@ export default function EventDetailPage() {
                             </div>
                         </div>
                         <div className="flex items-center gap-8 text-[10px] font-bold text-neutral-400 uppercase tracking-widest">
-                            <div className="flex items-center gap-2 border-r border-neutral-200 pr-8">
+                            <div className="flex items-center gap-2 border-r border-[#ECE8DF] pr-8">
                                 <Calendar size={12} className="text-neutral-300" />
                                 {new Date(event.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
                             </div>
@@ -489,10 +523,10 @@ export default function EventDetailPage() {
                             </div>
                         </div>
                     </div>
-
+ 
                     <div className="flex items-center gap-3">
                         <Link href={`/e/${event.slug}`} target="_blank">
-                            <Button variant="ghost" className="rounded-full px-8 h-12 font-black text-[10px] uppercase tracking-widest border-2 border-neutral-100 hover:border-neutral-900 transition-all">
+                            <Button variant="ghost" className="rounded-full px-8 h-12 font-black text-[10px] uppercase tracking-widest border-2 border-[#ECE8DF] hover:border-[#2A2724] hover:bg-[#ECE8DF]/40 transition-all text-[#2A2724]">
                                 Launch Booth <ArrowUpRight size={14} className="ml-2" />
                             </Button>
                         </Link>
@@ -523,13 +557,13 @@ export default function EventDetailPage() {
             </header>
 
             {/* Sub-Navigation: Minimal Underline Style */}
-            <nav className="flex gap-10 border-b border-neutral-100">
+            <nav className="flex gap-10 border-b border-[#ECE8DF]">
                 {(tabs as any).map((tab: any) => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
                         className={`pb-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative ${
-                            activeTab === tab.id ? 'text-neutral-900' : 'text-neutral-300 hover:text-neutral-500'
+                            activeTab === tab.id ? 'text-[#2A2724]' : 'text-neutral-300 hover:text-[#2A2724]/60'
                         }`}
                     >
                         {tab.label}
@@ -555,25 +589,25 @@ export default function EventDetailPage() {
                             exit={{ opacity: 0, y: -10 }}
                             className="grid grid-cols-1 md:grid-cols-3 gap-8"
                         >
-                            <Card className="p-10 border-neutral-100 bg-white shadow-sm hover:shadow-md transition-shadow">
+                            <Card className="p-10 border-[#ECE8DF] bg-white shadow-sm hover:shadow-md transition-shadow">
                                 <h3 className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mb-10">Total Captures</h3>
-                                <div className="text-6xl font-black text-neutral-900 mb-2 tabular-nums">{boothPhotos.length}</div>
+                                <div className="text-6xl font-black text-[#2A2724] mb-2 tabular-nums">{photoCount ?? '—'}</div>
                                 <div className="flex items-center gap-2 text-[10px] font-bold uppercase" style={{ color: boothSettings.themeColor }}>
                                     <ArrowUpRight size={12} /> Active Syncing
                                 </div>
                             </Card>
                             
-                            <Card className="p-10 border-neutral-100 bg-white shadow-sm">
+                            <Card className="p-10 border-[#ECE8DF] bg-white shadow-sm">
                                 <h3 className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mb-10">Visual Configs</h3>
-                                <div className="text-6xl font-black text-neutral-900 mb-2 tabular-nums">{templates.length}</div>
+                                <div className="text-6xl font-black text-[#2A2724] mb-2 tabular-nums">{templates.length}</div>
                                 <p className="text-[10px] font-bold text-neutral-400 uppercase">Registered Layouts</p>
                             </Card>
-
-                            <Card className="p-10 border-neutral-100 bg-white shadow-sm">
+ 
+                            <Card className="p-10 border-[#ECE8DF] bg-white shadow-sm">
                                 <h3 className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mb-10">Sync Status</h3>
                                 <div className="flex items-center gap-4">
-                                    <div className={`w-4 h-4 rounded-full ${event.is_active ? 'bg-neutral-900 animate-pulse' : 'bg-neutral-200'}`} />
-                                    <span className="text-4xl font-black text-neutral-900 uppercase tracking-tight">
+                                    <div className={`w-4 h-4 rounded-full ${event.is_active ? 'bg-[#2A2724] animate-pulse' : 'bg-neutral-200'}`} />
+                                    <span className="text-4xl font-black text-[#2A2724] uppercase tracking-tight">
                                         {event.is_active ? 'Online' : 'Offline'}
                                     </span>
                                 </div>
@@ -592,14 +626,14 @@ export default function EventDetailPage() {
                         >
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-4">
-                                    <h2 className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Archived Media</h2>
-                                    <button 
+                                    <h2 className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Archived Media</h2>
+                                    <button
                                         onClick={() => {
                                             setIsRefreshing(true);
-                                            fetchEvent().finally(() => setIsRefreshing(false));
+                                            fetchPhotos(0, true).finally(() => setIsRefreshing(false));
                                         }}
-                                        disabled={isRefreshing}
-                                        className="flex items-center gap-2 px-4 py-1.5 rounded-full border border-neutral-200 hover:border-neutral-900 transition-all text-neutral-400 hover:text-neutral-900 disabled:opacity-50 group"
+                                        disabled={isRefreshing || loadingPhotos}
+                                        className="flex items-center gap-2 px-4 py-1.5 rounded-full border border-[#ECE8DF] hover:border-[#2A2724] transition-all text-neutral-400 hover:text-[#2A2724] disabled:opacity-50 group"
                                         title="Refresh Gallery"
                                     >
                                         <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'} />
@@ -607,12 +641,12 @@ export default function EventDetailPage() {
                                     </button>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">{boothPhotos.length} Units</span>
-                                    <div className="h-4 w-px bg-neutral-200" />
+                                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">{photoCount ?? boothPhotos.length} Units</span>
+                                    <div className="h-4 w-px bg-[#ECE8DF]" />
                                     <Link 
                                         href={`/e/${event.slug}/gallery`} 
                                         target="_blank"
-                                        className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 transition-all shadow-lg hover:shadow-xl active:scale-95"
+                                        className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#2A2724] text-white hover:bg-[#3D3935] transition-all shadow-sm active:scale-95 border border-[#2A2724]"
                                     >
                                         <ExternalLink size={12} />
                                         <span className="text-[9px] font-black uppercase tracking-widest">View Public Gallery</span>
@@ -621,6 +655,11 @@ export default function EventDetailPage() {
                             </div>
 
                             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
+                                {loadingPhotos && boothPhotos.length === 0 && (
+                                    Array.from({ length: 12 }).map((_, i) => (
+                                        <div key={i} className="aspect-[3/4.5] bg-neutral-100 rounded-lg animate-pulse" />
+                                    ))
+                                )}
                                 {boothPhotos.map((photo, i) => (
                                     <motion.div 
                                         key={photo.id}
@@ -632,7 +671,7 @@ export default function EventDetailPage() {
                                             boxShadow: `0 20px 40px -10px ${boothSettings.themeColor}33`,
                                             borderColor: boothSettings.themeColor
                                         }}
-                                        className="group relative aspect-[3/4.5] bg-neutral-50 rounded-lg overflow-hidden border border-neutral-100 transition-all duration-500"
+                                        className="group relative aspect-[3/4.5] bg-[#FAF8F5] rounded-lg overflow-hidden border border-[#ECE8DF] transition-all duration-500"
                                     >
                                         {/* Selection Indicator */}
                                         <button 
@@ -650,7 +689,7 @@ export default function EventDetailPage() {
                                             className={`relative w-full h-full transition-opacity duration-500 ${!photo.is_published ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'} ${selectedPhotos.includes(photo.id) ? 'scale-90 opacity-60' : ''}`}
                                         >
                                             <Image
-                                                src={photo.final_url || photo.image_url}
+                                                src={photo.image_url}
                                                 alt="Archived Capture"
                                                 fill
                                                 className="object-cover transition-transform duration-700 group-hover:scale-105"
@@ -663,7 +702,7 @@ export default function EventDetailPage() {
                                         {/* Minimal Hover Controls */}
                                         <div 
                                             className="absolute inset-0 bg-neutral-900/60 opacity-0 group-hover:opacity-100 transition-all duration-300 backdrop-blur-[2px] flex flex-col justify-between p-4 cursor-zoom-in"
-                                            onClick={() => setPreviewPhoto(photo.final_url || photo.image_url)}
+                                            onClick={() => setPreviewPhoto(photo.image_url)}
                                             title="Click to preview"
                                         >
                                             <div className="flex justify-end">
@@ -685,7 +724,7 @@ export default function EventDetailPage() {
                                                 {/* Removed single print button as per user request */}
                                                 </div>
                                                 <button 
-                                                    onClick={(e) => { e.stopPropagation(); handleDownload(photo.final_url || photo.image_url, photo.id); }}
+                                                    onClick={(e) => { e.stopPropagation(); handleDownload(photo.image_url, photo.id); }}
                                                     disabled={downloadingId === photo.id}
                                                     className="w-full bg-white text-neutral-900 py-3 rounded-md text-[8px] font-black uppercase tracking-[0.1em] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                                                     title="Download"
@@ -701,6 +740,19 @@ export default function EventDetailPage() {
                                     </motion.div>
                                 ))}
                             </div>
+
+                            {hasMorePhotos && (
+                                <div className="flex justify-center pt-4">
+                                    <button
+                                        onClick={() => fetchPhotos(photoPage + 1)}
+                                        disabled={loadingPhotos}
+                                        className="px-8 py-3 rounded-full border border-[#ECE8DF] hover:border-[#2A2724] text-[10px] font-black uppercase tracking-widest text-neutral-500 hover:text-[#2A2724] transition-all disabled:opacity-40 flex items-center gap-2"
+                                    >
+                                        {loadingPhotos ? <RefreshCw size={12} className="animate-spin" /> : null}
+                                        {loadingPhotos ? 'Loading...' : 'Load More'}
+                                    </button>
+                                </div>
+                            )}
                         </motion.div>
                     )}
 
@@ -712,27 +764,25 @@ export default function EventDetailPage() {
                             exit={{ opacity: 0, x: -20 }}
                             className="max-w-2xl mx-auto"
                         >
-                            <Card className="p-12 border-neutral-100 bg-white space-y-12 shadow-sm">
+                            <Card className="p-12 border-[#ECE8DF] bg-white space-y-12 shadow-sm">
                                 <div className="space-y-2">
-                                    <h3 className="text-xl font-black text-neutral-900 uppercase tracking-tight">Public Terminal Config</h3>
+                                    <h3 className={`text-xl font-black text-[#2A2724] uppercase tracking-tight ${playfair.className}`}>Public Terminal Config</h3>
                                     <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Adjust the public booth behavior and aesthetic</p>
                                 </div>
-
+ 
                                 <div className="space-y-12">
                                     <div className="space-y-3">
-                                        <label className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Welcome Message</label>
+                                        <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Welcome Message</label>
                                         <input
                                             type="text"
                                             value={boothSettings.welcomeMessage}
                                             onChange={(e) => setBoothSettings({ ...boothSettings, welcomeMessage: e.target.value })}
-                                            className="w-full bg-neutral-50 border border-neutral-100 rounded-lg px-6 py-5 text-sm focus:outline-none focus:border-neutral-900 transition-all font-medium"
+                                            className="w-full bg-[#FAF8F5] border border-[#ECE8DF] rounded-lg px-6 py-5 text-sm focus:outline-none focus:border-[#2A2724] transition-all font-medium text-[#2A2724]"
                                             placeholder="ARCHIVE_WELCOME_SEQ"
                                         />
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-10">
+                                    </div>                                    <div className="grid grid-cols-2 gap-10">
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Countdown Delay</label>
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Countdown Delay</label>
                                             <div className="grid grid-cols-3 gap-2">
                                                 {[3, 5, 7].map(s => (
                                                     <button 
@@ -750,21 +800,22 @@ export default function EventDetailPage() {
                                                 ))}
                                             </div>
                                         </div>
+ 
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Branding Tint</label>
-                                            <div className="flex items-center gap-4 p-1 bg-neutral-50 rounded-lg border border-neutral-100">
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Branding Tint</label>
+                                            <div className="flex items-center gap-4 p-1 bg-[#FAF8F5] rounded-lg border border-[#ECE8DF]">
                                                 <input
                                                     type="color"
                                                     value={boothSettings.themeColor}
                                                     onChange={(e) => setBoothSettings({ ...boothSettings, themeColor: e.target.value })}
                                                     className="w-10 h-10 rounded-md cursor-pointer border-0 bg-transparent"
                                                 />
-                                                <span className="text-[10px] font-mono font-black text-neutral-900 uppercase">{boothSettings.themeColor}</span>
+                                                <span className="text-[10px] font-mono font-black text-[#2A2724] uppercase">{boothSettings.themeColor}</span>
                                             </div>
                                         </div>
                                     </div>
-
-                                    <div className="pt-10 border-t border-neutral-100 flex justify-end">
+ 
+                                    <div className="pt-10 border-t border-[#ECE8DF] flex justify-end">
                                         <Button 
                                             variant="ghost"
                                             onClick={handleSaveBoothSettings} 
@@ -792,16 +843,16 @@ export default function EventDetailPage() {
                             exit={{ opacity: 0, x: -20 }}
                             className="max-w-2xl mx-auto"
                         >
-                            <Card className="p-12 border-neutral-100 bg-white space-y-12 shadow-sm">
+                            <Card className="p-12 border-[#ECE8DF] bg-white space-y-12 shadow-sm">
                                 <div className="space-y-2">
-                                    <h3 className="text-xl font-black text-neutral-900 uppercase tracking-tight">Gallery Aesthetic Protocol</h3>
+                                    <h3 className={`text-xl font-black text-[#2A2724] uppercase tracking-tight ${playfair.className}`}>Gallery Aesthetic Protocol</h3>
                                     <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Customize the official guest-facing archive</p>
                                 </div>
-
+ 
                                 <div className="space-y-12">
                                     <div className="space-y-8">
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Visual Theme</label>
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Visual Theme</label>
                                             <div className="grid grid-cols-2 gap-4">
                                                 {['modern', 'valentine', 'minimal', 'dark', 'retro', 'editorial', 'neon', 'organic', 'serenity', 'industrial', 'vibrant'].map(t => (
                                                     <button 
@@ -809,8 +860,8 @@ export default function EventDetailPage() {
                                                         onClick={() => setGallerySettings({ ...gallerySettings, themeStyle: t })}
                                                         className={`p-4 rounded-xl border-2 transition-all text-left group ${
                                                             gallerySettings.themeStyle === t 
-                                                            ? 'border-neutral-900 bg-neutral-900 text-white shadow-xl scale-[1.02]' 
-                                                            : 'border-neutral-100 hover:border-neutral-200 bg-neutral-50/50'
+                                                            ? 'border-[#2A2724] bg-[#2A2724] text-white shadow-sm scale-[1.02]' 
+                                                            : 'border-[#ECE8DF] hover:border-neutral-200 bg-[#FAF8F5]'
                                                         }`}
                                                     >
                                                         <p className="text-[10px] font-black uppercase tracking-widest mb-1">{t}</p>
@@ -821,7 +872,7 @@ export default function EventDetailPage() {
                                         </div>
 
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Gallery Architecture</label>
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Gallery Architecture</label>
                                             <div className="grid grid-cols-4 gap-4">
                                                 {[
                                                     { id: 'carousel', label: 'Carousel', icon: StretchHorizontal },
@@ -834,8 +885,8 @@ export default function EventDetailPage() {
                                                         onClick={() => setGallerySettings({ ...gallerySettings, layoutType: l.id })}
                                                         className={`flex flex-col items-center gap-3 p-4 rounded-xl border-2 transition-all group ${
                                                             gallerySettings.layoutType === l.id 
-                                                            ? 'border-neutral-900 bg-neutral-900 text-white shadow-xl' 
-                                                            : 'border-neutral-100 hover:border-neutral-200 bg-neutral-50/50'
+                                                            ? 'border-[#2A2724] bg-[#2A2724] text-white shadow-sm' 
+                                                            : 'border-[#ECE8DF] hover:border-neutral-200 bg-[#FAF8F5]'
                                                         }`}
                                                     >
                                                         <l.icon size={18} />
@@ -846,8 +897,8 @@ export default function EventDetailPage() {
                                         </div>
 
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Color Strategy</label>
-                                            <div className="grid grid-cols-2 gap-4 p-4 bg-neutral-50 rounded-xl border border-neutral-100">
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Color Strategy</label>
+                                            <div className="grid grid-cols-2 gap-4 p-4 bg-[#FAF8F5] rounded-xl border border-[#ECE8DF]">
                                                 <div className="space-y-2">
                                                     <label className="text-[8px] font-bold text-neutral-400 uppercase">Primary Color</label>
                                                     <div className="flex items-center gap-3">
@@ -857,7 +908,7 @@ export default function EventDetailPage() {
                                                             onChange={(e) => setGallerySettings({ ...gallerySettings, primaryColor: e.target.value })}
                                                             className="w-10 h-10 rounded-lg cursor-pointer border-0 bg-transparent"
                                                         />
-                                                        <span className="text-[10px] font-mono font-black text-neutral-900 uppercase">{gallerySettings.primaryColor}</span>
+                                                        <span className="text-[10px] font-mono font-black text-[#2A2724] uppercase">{gallerySettings.primaryColor}</span>
                                                     </div>
                                                 </div>
                                                 <div className="space-y-2">
@@ -869,46 +920,46 @@ export default function EventDetailPage() {
                                                             onChange={(e) => setGallerySettings({ ...gallerySettings, secondaryColor: e.target.value })}
                                                             className="w-10 h-10 rounded-lg cursor-pointer border-0 bg-transparent"
                                                         />
-                                                        <span className="text-[10px] font-mono font-black text-neutral-900 uppercase">{gallerySettings.secondaryColor}</span>
+                                                        <span className="text-[10px] font-mono font-black text-[#2A2724] uppercase">{gallerySettings.secondaryColor}</span>
                                                     </div>
                                                 </div>
                                             </div>
                                         </div>
-
+ 
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Headline Title</label>
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Headline Title</label>
                                             <input
                                                 type="text"
                                                 value={gallerySettings.title}
                                                 onChange={(e) => setGallerySettings({ ...gallerySettings, title: e.target.value })}
-                                                className="w-full bg-neutral-50 border border-neutral-100 rounded-lg px-6 py-5 text-sm focus:outline-none focus:border-neutral-900 transition-all font-medium"
+                                                className="w-full bg-[#FAF8F5] border border-[#ECE8DF] rounded-lg px-6 py-5 text-sm focus:outline-none focus:border-[#2A2724] transition-all font-medium text-[#2A2724]"
                                                 placeholder={event.name}
                                             />
                                         </div>
-
+ 
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Subtext Description</label>
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Subtext Description</label>
                                             <textarea
                                                 value={gallerySettings.subtitle}
                                                 onChange={(e) => setGallerySettings({ ...gallerySettings, subtitle: e.target.value })}
-                                                className="w-full bg-neutral-50 border border-neutral-100 rounded-lg px-6 py-5 text-sm focus:outline-none focus:border-neutral-900 transition-all font-medium h-32"
+                                                className="w-full bg-[#FAF8F5] border border-[#ECE8DF] rounded-lg px-6 py-5 text-sm focus:outline-none focus:border-[#2A2724] transition-all font-medium text-[#2A2724] h-32"
                                                 placeholder="Capturing moments, creating memories."
                                             />
                                         </div>
-
+ 
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Handwritten Note</label>
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Handwritten Note</label>
                                             <input
                                                 type="text"
                                                 value={gallerySettings.handwrittenNote}
                                                 onChange={(e) => setGallerySettings({ ...gallerySettings, handwrittenNote: e.target.value })}
-                                                className="w-full bg-neutral-50 border border-neutral-100 rounded-lg px-6 py-5 text-sm focus:outline-none focus:border-neutral-900 transition-all font-medium"
+                                                className="w-full bg-[#FAF8F5] border border-[#ECE8DF] rounded-lg px-6 py-5 text-sm focus:outline-none focus:border-[#2A2724] transition-all font-medium text-[#2A2724]"
                                                 placeholder="All yours!"
                                             />
                                         </div>
                                     </div>
-
-                                    <div className="pt-10 border-t border-neutral-100 flex justify-end">
+ 
+                                    <div className="pt-10 border-t border-[#ECE8DF] flex justify-end">
                                         <Button 
                                             variant="ghost"
                                             onClick={handleSaveBoothSettings} 
@@ -936,52 +987,52 @@ export default function EventDetailPage() {
                             className="space-y-10"
                         >
                             <div className="flex items-center justify-between">
-                                <h2 className="text-[10px] font-black text-neutral-900 uppercase tracking-[0.2em]">Registered Layouts</h2>
+                                <h2 className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Registered Layouts</h2>
                                 <button 
                                     onClick={() => { setEditingTemplate(null); setShowEditor(true); }} 
-                                    className="group relative h-11 flex items-center gap-4 pl-5 pr-7 bg-neutral-900 rounded-full overflow-hidden transition-all hover:scale-[1.02] active:scale-[0.98] shadow-2xl"
+                                    className="group relative h-11 flex items-center gap-4 pl-5 pr-7 bg-[#2A2724] rounded-full overflow-hidden transition-all hover:scale-[1.02] active:scale-[0.98] border border-[#2A2724]"
                                 >
                                     {/* Animated Background Overlay */}
                                     <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" 
                                         style={{ background: `linear-gradient(45deg, ${boothSettings.themeColor}44, transparent)` }} 
                                     />
                                     
-                                    <div className="relative z-10 w-5 h-5 rounded-full bg-white flex items-center justify-center text-neutral-900 group-hover:rotate-90 transition-transform duration-500">
+                                    <div className="relative z-10 w-5 h-5 rounded-full bg-white flex items-center justify-center text-[#2A2724] group-hover:rotate-90 transition-transform duration-500">
                                         <Plus size={12} />
                                     </div>
                                     <span className="relative z-10 text-[9px] font-black text-white uppercase tracking-[0.2em]">Add New Template</span>
                                 </button>
                             </div>
-
+ 
                             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-8">
                                 {templates.map((tpl) => {
                                     const isPortrait = tpl.width < tpl.height;
                                     const orientationLabel = tpl.width === tpl.height ? 'Square' : isPortrait ? 'Portrait' : 'Landscape';
                                     
                                     return (
-                                        <Card key={tpl.id} className="group relative overflow-hidden border-neutral-100 bg-white hover:border-neutral-900 transition-all duration-700 shadow-sm hover:shadow-2xl">
-                                            <div className="aspect-[3/4] bg-neutral-50 flex items-center justify-center p-8 transition-all duration-700 group-hover:bg-neutral-100 relative overflow-hidden">
+                                        <Card key={tpl.id} className="group relative overflow-hidden border-[#ECE8DF] bg-white hover:border-[#2A2724] transition-all duration-700 shadow-sm">
+                                            <div className="aspect-[3/4] bg-[#FAF8F5] flex items-center justify-center p-8 transition-all duration-700 group-hover:bg-[#FAF8F5]/50 relative overflow-hidden">
                                                 {/* Subtle Background Pattern */}
                                                 <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
                                                 
                                                 <div className="w-full h-full flex items-center justify-center p-4">
                                                     <TemplatePreview template={tpl} />
                                                 </div>
-
+ 
                                                 <div className="absolute top-4 right-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-x-4 group-hover:translate-x-0">
-                                                    <div className="px-2 py-1 bg-neutral-900 text-white text-[7px] font-black uppercase tracking-widest rounded shadow-xl">
+                                                    <div className="px-2 py-1 bg-[#2A2724] text-white text-[7px] font-black uppercase tracking-widest rounded shadow-xl">
                                                         {orientationLabel}
                                                     </div>
-                                                    <div className="px-2 py-1 bg-white border border-neutral-200 text-neutral-900 text-[7px] font-black uppercase tracking-widest rounded shadow-xl">
+                                                    <div className="px-2 py-1 bg-white border border-[#ECE8DF] text-[#2A2724] text-[7px] font-black uppercase tracking-widest rounded shadow-xl">
                                                         {tpl.width}×{tpl.height}
                                                     </div>
                                                 </div>
                                             </div>
-
+ 
                                             <div className="p-6 space-y-4">
                                                 <div className="flex items-center justify-between">
                                                     <div className="space-y-1">
-                                                        <h4 className="text-[10px] font-black text-neutral-900 uppercase tracking-widest">{tpl.name}</h4>
+                                                        <h4 className="text-[10px] font-black text-[#2A2724] uppercase tracking-widest">{tpl.name}</h4>
                                                         <p className="text-[8px] font-bold text-neutral-400 uppercase tracking-tighter">
                                                             {tpl.slots.length} Photo Slots • {tpl.layout.rows}x{tpl.layout.cols} Matrix
                                                         </p>
@@ -989,7 +1040,7 @@ export default function EventDetailPage() {
                                                     <div className="flex gap-1">
                                                         <button 
                                                             onClick={() => { setEditingTemplate(tpl); setShowEditor(true); }} 
-                                                            className="p-2.5 bg-neutral-50 hover:bg-neutral-900 hover:text-white rounded-full transition-all duration-300"
+                                                            className="p-2.5 bg-[#FAF8F5] hover:bg-[#2A2724] hover:text-white rounded-full transition-all duration-300 border border-[#ECE8DF]"
                                                         >
                                                             <Settings size={14} />
                                                         </button>
@@ -1241,11 +1292,11 @@ export default function EventDetailPage() {
                     <PrintDesigner 
                         selectedPhotos={boothPhotos.filter(p => selectedPhotos.includes(p.id)).map(p => ({
                             id: p.id,
-                            url: p.final_url || p.image_url
+                            url: p.image_url
                         }))}
                         allPhotos={boothPhotos.map(p => ({
                             id: p.id,
-                            url: p.final_url || p.image_url
+                            url: p.image_url
                         }))}
                         templates={templates.map(t => ({
                             id: t.id,

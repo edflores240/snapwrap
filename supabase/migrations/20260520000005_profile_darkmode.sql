@@ -1,0 +1,2 @@
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS dark_mode BOOLEAN NOT NULL DEFAULT false;

@@ -7,6 +7,9 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { motion } from 'framer-motion';
 import { Calendar, Trash2 } from 'lucide-react';
+import { Playfair_Display } from 'next/font/google';
+
+const playfair = Playfair_Display({ subsets: ['latin'] });
 
 interface Event {
     id: string;
@@ -67,13 +70,13 @@ export default function EventsPage() {
         <div className="space-y-8">
             <div className="flex justify-between items-center">
                 <div>
-                    <h1 className="text-4xl font-bold text-gray-900 mb-2">
+                    <h1 className={`text-4xl font-black text-[#2A2724] mb-2 ${playfair.className}`}>
                         Events
                     </h1>
-                    <p className="text-gray-600">Manage your photo booth sessions and galleries</p>
+                    <p className="text-neutral-500 font-medium">Manage your photo booth sessions and galleries</p>
                 </div>
                 <Link href="/admin/events/new">
-                    <Button variant="primary" className="shadow-lg hover:shadow-primary/25">
+                    <Button className="bg-[#2A2724] hover:bg-[#3D3935] text-white rounded-full px-6 py-2.5 font-bold shadow-sm">
                         + Create Event
                     </Button>
                 </Link>
@@ -84,10 +87,10 @@ export default function EventsPage() {
                     {[1, 2, 3].map((i) => (
                         <div key={i} className="relative">
                             <div
-                                className="absolute inset-0 bg-neutral-100 rounded-2xl translate-y-[-12px] z-0"
+                                className="absolute inset-0 bg-[#FAF8F5] rounded-2xl translate-y-[-12px] z-0"
                                 style={{ clipPath: 'polygon(0% 20%, 40% 20%, 48% 0%, 100% 0%, 100% 100%, 0% 100%)' }}
                             />
-                            <div className="relative z-10 min-h-[280px] bg-white border border-neutral-200 rounded-2xl overflow-hidden flex flex-col animate-pulse">
+                            <div className="relative z-10 min-h-[280px] bg-white border border-[#ECE8DF] rounded-2xl overflow-hidden flex flex-col animate-pulse">
                                 <div className="h-1 w-full bg-neutral-100" />
                                 <div className="p-10 flex flex-col flex-1">
                                     <div className="flex justify-between mb-8">
@@ -98,7 +101,7 @@ export default function EventsPage() {
                                         <div className="h-6 w-3/4 bg-neutral-100 rounded" />
                                         <div className="h-4 w-1/2 bg-neutral-100 rounded-full" />
                                     </div>
-                                    <div className="mt-12 pt-8 border-t border-dashed border-neutral-200 flex justify-between items-center">
+                                    <div className="mt-12 pt-8 border-t border-dashed border-[#ECE8DF] flex justify-between items-center">
                                         <div className="space-y-1">
                                             <div className="h-2 w-16 bg-neutral-100 rounded" />
                                             <div className="h-3 w-24 bg-neutral-100 rounded" />
@@ -111,10 +114,12 @@ export default function EventsPage() {
                     ))}
                 </div>
             ) : events.length === 0 ? (
-                <Card className="p-12 text-center border-dashed border-2">
-                    <div className="text-gray-600 mb-4 text-lg">No events found</div>
+                <Card className="p-12 text-center border-dashed border-2 border-[#ECE8DF]">
+                    <div className="text-neutral-500 mb-6 text-lg font-medium">No events found</div>
                     <Link href="/admin/events/new">
-                        <Button variant="secondary">Create your first event</Button>
+                        <Button className="bg-[#2A2724] hover:bg-[#3D3935] text-white rounded-full px-6 py-2 font-bold shadow-sm">
+                            Create your first event
+                        </Button>
                     </Link>
                 </Card>
             ) : (
@@ -136,8 +141,8 @@ export default function EventsPage() {
                                         className="absolute inset-0 rounded-2xl transform translate-y-[-12px] transition-transform group-hover:translate-y-[-16px] duration-300 z-0"
                                         style={{
                                             clipPath: 'polygon(0% 20%, 40% 20%, 48% 0%, 100% 0%, 100% 100%, 0% 100%)',
-                                            backgroundColor: `${color}18`,
-                                            border: `1px solid ${color}35`,
+                                            backgroundColor: `${color}10`,
+                                            border: `1px solid ${color}20`,
                                         }}
                                     />
 
@@ -145,14 +150,14 @@ export default function EventsPage() {
                                     <div
                                         className="relative min-h-[280px] bg-white rounded-2xl shadow-sm transition-all duration-300 group-hover:translate-y-[-2px] flex flex-col z-10 overflow-hidden"
                                         style={{
-                                            border: `1px solid ${color}25`,
-                                            boxShadow: `0 1px 3px 0 ${color}15`,
+                                            border: `1px solid ${color}15`,
+                                            boxShadow: `0 1px 3px 0 ${color}10`,
                                         }}
                                         onMouseEnter={e => {
-                                            (e.currentTarget as HTMLDivElement).style.boxShadow = `0 20px 40px -12px ${color}30, 0 4px 16px -4px ${color}20`;
+                                            (e.currentTarget as HTMLDivElement).style.boxShadow = `0 20px 40px -12px ${color}20, 0 4px 16px -4px ${color}15`;
                                         }}
                                         onMouseLeave={e => {
-                                            (e.currentTarget as HTMLDivElement).style.boxShadow = `0 1px 3px 0 ${color}15`;
+                                            (e.currentTarget as HTMLDivElement).style.boxShadow = `0 1px 3px 0 ${color}10`;
                                         }}
                                     >
                                         {/* Theme color accent strip */}
@@ -183,7 +188,7 @@ export default function EventsPage() {
                                             </div>
 
                                             <div className="mb-auto space-y-6">
-                                                <h3 className="text-2xl font-bold text-neutral-900 leading-tight">
+                                                <h3 className={`text-2xl font-black text-[#2A2724] leading-tight ${playfair.className}`}>
                                                     {event.name}
                                                 </h3>
 
@@ -203,12 +208,12 @@ export default function EventsPage() {
                                                 </div>
                                             </div>
 
-                                            <div className="mt-12 pt-8 border-t border-dashed border-neutral-200 flex items-center justify-between">
+                                            <div className="mt-12 pt-8 border-t border-dashed border-[#ECE8DF] flex items-center justify-between">
                                                 <div className="flex flex-col gap-1">
                                                     <span className="text-[9px] font-black text-neutral-300 uppercase tracking-widest">
                                                         Serial Number
                                                     </span>
-                                                    <span className="text-[10px] font-bold text-neutral-900 uppercase tracking-widest">
+                                                    <span className="text-[10px] font-bold text-[#2A2724] uppercase tracking-widest">
                                                         SR-{event.id.slice(0, 8)}
                                                     </span>
                                                 </div>
@@ -217,7 +222,7 @@ export default function EventsPage() {
                                                         e.preventDefault();
                                                         handleDelete(event.id);
                                                     }}
-                                                    className="text-neutral-300 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-lg"
+                                                    className="text-neutral-300 hover:text-red-500 transition-colors p-2 hover:bg-red-50/60 rounded-lg"
                                                 >
                                                     <Trash2 size={18} />
                                                 </button>
