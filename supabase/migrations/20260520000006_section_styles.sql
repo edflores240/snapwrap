@@ -1,0 +1,3 @@
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS testimonials JSONB NOT NULL DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS section_styles JSONB NOT NULL DEFAULT '{}';

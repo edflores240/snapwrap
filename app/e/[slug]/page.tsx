@@ -8,9 +8,9 @@ import TemplatePreview from '@/components/templates/TemplatePreview';
 import PrintDesigner from '@/components/PrintDesigner';
 import QRCode from 'react-qr-code';
 
-import { 
-    FlipHorizontal, Video, ZoomIn, ZoomOut, 
-    RotateCcw, RotateCw, Plus, X, ArrowUp, ArrowDown, Trash2, Printer 
+import {
+    FlipHorizontal, Video, ZoomIn, ZoomOut,
+    RotateCcw, RotateCw, Plus, X, ArrowUp, ArrowDown, Trash2, Printer, Aperture
 } from 'lucide-react';
 
 interface Event {
@@ -57,6 +57,32 @@ function hexToHSL(hex: string): { h: number; s: number; l: number } {
         }
     }
     return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+}
+
+// Pure function outside component — no trig, just algebra. r₂*cos(θ) = (r₂/r)*nx = factor*nx
+function applyFisheyeToCanvas(canvas: HTMLCanvasElement) {
+    const W = canvas.width, H = canvas.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const src = ctx.getImageData(0, 0, W, H).data;
+    const dst = new Uint8ClampedArray(W * H * 4);
+    const cx = W / 2, cy = H / 2;
+    const k = 0.45;
+    for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            const nx = (x - cx) / cx;
+            const ny = (y - cy) / cy;
+            const r2 = nx * nx + ny * ny;
+            const factor = 1 - k * r2;   // r₂/r; equals (1 - k*r²)
+            const sx = (factor * nx * cx + cx) | 0;
+            const sy = (factor * ny * cy + cy) | 0;
+            if (sx >= 0 && sx < W && sy >= 0 && sy < H) {
+                const di = (y * W + x) * 4, si = (sy * W + sx) * 4;
+                dst[di] = src[si]; dst[di+1] = src[si+1]; dst[di+2] = src[si+2]; dst[di+3] = src[si+3];
+            }
+        }
+    }
+    ctx.putImageData(new ImageData(dst, W, H), 0, 0);
 }
 
 export default function PublicBoothPage() {
@@ -115,6 +141,9 @@ export default function PublicBoothPage() {
     const [showPrintPicker, setShowPrintPicker] = useState(false);
     const [printCompositeUrl, setPrintCompositeUrl] = useState<string | null>(null);
     const [generatingPrint, setGeneratingPrint] = useState(false);
+
+    // Fisheye lens
+    const [fisheyeEnabled, setFisheyeEnabled] = useState(false);
 
     // Photo filters
     const [selectedFilter, setSelectedFilter] = useState('none');
@@ -314,8 +343,9 @@ export default function PublicBoothPage() {
         ctx.drawImage(video, zx, zy, zWidth, zHeight, 0, 0, canvas.width, canvas.height);
         ctx.filter = 'none';
         ctx.setTransform(1, 0, 0, 1, 0, 0);
+        if (fisheyeEnabled) applyFisheyeToCanvas(canvas);
         return canvas.toDataURL('image/jpeg', 0.95);
-    }, [selectedTemplate, isMirrored, zoom, selectedFilter]);
+    }, [selectedTemplate, isMirrored, zoom, selectedFilter, fisheyeEnabled]);
 
     // ── Step Handlers ──────────────────────────────────────────────────
 
@@ -625,6 +655,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                     const sx = (transform.x / 100) * W;
                     const sy = (transform.y / 100) * H;
                     const radius = (selectedTemplate.borderRadius / 4) * SCALE;
+                    const isCircleSlot = slot.clipShape === 'circle';
 
                     ctx.save();
                     ctx.translate(sx + sw / 2, sy + sh / 2);
@@ -632,14 +663,22 @@ const handleFallbackDownload = (dataUrl: string) => {
 
                     // Draw slot background (black placeholder)
                     ctx.beginPath();
-                    ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
+                    if (isCircleSlot) {
+                        ctx.ellipse(0, 0, sw / 2, sh / 2, 0, 0, Math.PI * 2);
+                    } else {
+                        ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
+                    }
                     ctx.fillStyle = '#000000';
                     ctx.fill();
 
                     // Draw captured photo if available
                     if (photoSrc) {
                         ctx.beginPath();
-                        ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
+                        if (isCircleSlot) {
+                            ctx.ellipse(0, 0, sw / 2, sh / 2, 0, 0, Math.PI * 2);
+                        } else {
+                            ctx.roundRect(-sw / 2, -sh / 2, sw, sh, radius);
+                        }
                         ctx.clip();
 
                         const img = await loadImage(photoSrc);
@@ -1162,7 +1201,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                                     height: `${slot.height}%`,
                                                     transform: `rotate(${slot.rotation || 0}deg)`,
                                                     zIndex: item.zIndex,
-                                                    borderRadius: `${selectedTemplate.borderRadius / 4}px`,
+                                                    borderRadius: slot.clipShape === 'circle' ? '50%' : `${selectedTemplate.borderRadius / 4}px`,
                                                     border: selectedTemplate.borderWidth > 0 ? `${selectedTemplate.borderWidth / 2}px solid ${selectedTemplate.borderColor}` : 'none',
                                                     outline: isCurrent && captureSubState === 'preview'
                                                         ? `3px solid ${tc}`
@@ -1179,8 +1218,14 @@ const handleFallbackDownload = (dataUrl: string) => {
                                                             ref={setVideoRef}
                                                             autoPlay playsInline muted
                                                             className="absolute inset-0 w-full h-full object-cover"
-                                                            style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})`, filter: FILTERS.find(f => f.id === selectedFilter)?.css || 'none' }}
+                                                            style={{
+                                                                transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})`,
+                                                                filter: FILTERS.find(f => f.id === selectedFilter)?.css || 'none',
+                                                            }}
                                                         />
+                                                        {fisheyeEnabled && (
+                                                            <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(circle at center, transparent 62%, rgba(0,0,0,0.85) 100%)' }} />
+                                                        )}
                                                     </div>
                                                 )}
                                                 {!capturedPhotos[i] && !showCamera && (
@@ -1375,6 +1420,20 @@ const handleFallbackDownload = (dataUrl: string) => {
                                         ) : (
                                             <Video size={18} className="group-hover:scale-110 transition-transform" />
                                         )}
+                                    </button>
+
+                                    {/* Fisheye Toggle */}
+                                    <button
+                                        onClick={() => setFisheyeEnabled(f => !f)}
+                                        className="border rounded-xl p-3 transition-all flex items-center justify-center group shrink-0"
+                                        title="Fisheye Lens"
+                                        style={{
+                                            background: fisheyeEnabled ? `${tc}30` : 'rgba(0,0,0,0.5)',
+                                            borderColor: fisheyeEnabled ? tc : 'rgba(255,255,255,0.15)',
+                                            color: fisheyeEnabled ? tc : 'white',
+                                        }}
+                                    >
+                                        <Aperture size={18} className="group-hover:scale-110 transition-transform" />
                                     </button>
                                 </div>
                             )}
@@ -1585,7 +1644,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                                     height: `${transform.height}%`,
                                                     transform: `rotate(${transform.rotation || 0}deg) scale(${transform.scale || 1})`,
                                                     zIndex: item.zIndex,
-                                                    borderRadius: `${selectedTemplate.borderRadius / 4}px`,
+                                                    borderRadius: item.data.clipShape === 'circle' ? '50%' : `${selectedTemplate.borderRadius / 4}px`,
                                                     border: selectedTemplate.borderWidth > 0 ? `${selectedTemplate.borderWidth / 2}px solid ${selectedTemplate.borderColor}` : 'none',
                                                 }}
                                             >

@@ -1,29 +1,86 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, createContext, useContext } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { 
-    LayoutDashboard, 
-    Calendar, 
-    LogOut, 
-    Settings, 
-    Users,
+import type { User } from '@supabase/supabase-js';
+import type { Profile } from '@/lib/auth';
+import { getPlanLabel } from '@/lib/plans';
+import { Inter, Playfair_Display } from 'next/font/google';
+
+const inter = Inter({ subsets: ['latin'] });
+const playfair = Playfair_Display({ subsets: ['latin'] });
+import {
+    LayoutDashboard,
+    Calendar,
+    LogOut,
     ChevronRight,
-    Camera
+    Camera,
+    UserCircle,
+    CreditCard,
+    Menu,
+    X,
 } from 'lucide-react';
 
+// ── Context ─────────────────────────────────────────────────────────────────
+interface AdminContextValue {
+    user: User | null;
+    profile: Profile | null;
+    refreshProfile: () => Promise<void>;
+    pendingReviewCount: number;
+}
+
+const AdminContext = createContext<AdminContextValue>({
+    user: null,
+    profile: null,
+    refreshProfile: async () => {},
+    pendingReviewCount: 0,
+});
+
+export function useAdmin() {
+    return useContext(AdminContext);
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
     const router = useRouter();
     const [loading, setLoading] = useState(true);
+    const [user, setUser] = useState<User | null>(null);
+    const [profile, setProfile] = useState<Profile | null>(null);
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [pendingReviewCount, setPendingReviewCount] = useState(0);
+
+    const fetchProfile = async (userId: string) => {
+        const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .single();
+        return (data as Profile) || null;
+    };
+
+    const fetchPendingCount = async (profileId: string) => {
+        const { count } = await supabase
+            .from('testimonial_submissions')
+            .select('id', { count: 'exact', head: true })
+            .eq('profile_id', profileId)
+            .eq('status', 'pending');
+        setPendingReviewCount(count ?? 0);
+    };
+
+    const refreshProfile = async () => {
+        if (user) {
+            const p = await fetchProfile(user.id);
+            setProfile(p);
+            if (p) fetchPendingCount(p.id);
+        }
+    };
 
     useEffect(() => {
-        // Initial check on mount
         checkUser();
 
-        // Subscribe to auth changes (like token expiration or logout in another tab)
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             if (event === 'SIGNED_OUT' || !session) {
                 router.push('/admin/login');
@@ -31,15 +88,34 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         });
 
         return () => subscription.unsubscribe();
-    }, []); // Only run once on mount
+    }, []);
 
     const checkUser = async () => {
         const { data: { session } } = await supabase.auth.getSession();
-        if (!session && !pathname.includes('/login')) {
-            router.push('/admin/login');
-        } else {
+        if (!session) {
+            if (!pathname.includes('/login')) router.push('/admin/login');
             setLoading(false);
+            return;
         }
+
+        setUser(session.user);
+
+        // Skip profile check on login/onboarding pages
+        if (pathname.includes('/login') || pathname.includes('/onboarding')) {
+            setLoading(false);
+            return;
+        }
+
+        const p = await fetchProfile(session.user.id);
+        if (!p) {
+            // First time — send to onboarding
+            router.push('/onboarding');
+            return;
+        }
+
+        setProfile(p);
+        fetchPendingCount(p.id);
+        setLoading(false);
     };
 
     const handleLogout = async () => {
@@ -49,10 +125,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-[#F7F7F5]">
+            <div className={`min-h-screen flex items-center justify-center bg-[#FAF8F5] ${inter.className}`}>
                 <div className="flex flex-col items-center gap-4">
-                    <div className="w-8 h-8 border-2 border-neutral-200 border-t-neutral-900 rounded-full animate-spin" />
-                    <div className="text-neutral-400 text-sm font-medium tracking-wide uppercase">SnapWrap</div>
+                    <div className="w-8 h-8 border-2 border-neutral-200 border-t-[#2A2724] rounded-full animate-spin" />
+                    <div className={`text-[#2A2724] text-sm font-black tracking-widest uppercase ${playfair.className}`}>SnapWrap</div>
                 </div>
             </div>
         );
@@ -61,94 +137,141 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const navItems = [
         { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
         { name: 'Events', href: '/admin/events', icon: Calendar },
+        { name: 'Profile', href: '/admin/profile', icon: UserCircle },
+        { name: 'Billing', href: '/admin/billing', icon: CreditCard },
     ];
 
-    // If on login page, render only children (full screen)
     if (pathname.includes('/login')) {
-        return (
-            <div className="min-h-screen bg-[#F7F7F5]">
-                {children}
-            </div>
-        );
+        return <div className={`min-h-screen bg-[#FAF8F5] ${inter.className}`}>{children}</div>;
     }
 
-    return (
-        <div className="min-h-screen flex bg-[#F7F7F5] text-neutral-900 antialiased relative overflow-hidden">
-            {/* Background Branded Element */}
-            <div className="fixed -right-24 -bottom-24 w-96 h-96 opacity-[0.03] pointer-events-none select-none">
-                <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-                    <path fill="currentColor" d="M44.7,-76.4C58.1,-69.2,69.2,-58.1,76.4,-44.7C83.7,-31.3,87.1,-15.7,87.1,0C87.1,15.7,83.7,31.3,76.4,44.7C69.2,58.1,58.1,69.2,44.7,76.4C31.3,83.7,15.7,87.1,0,87.1C-15.7,87.1,-31.3,83.7,-44.7,76.4C-58.1,69.2,-69.2,58.1,-76.4,44.7C-83.7,31.3,-87.1,15.7,-87.1,0C-87.1,-15.7,-83.7,-31.3,-76.4,-44.7C-69.2,-58.1,-58.1,-69.2,-44.7,-76.4C-31.3,-83.7,-15.7,-87.1,0,-87.1C15.7,-87.1,31.3,-83.7,44.7,-76.4Z" transform="translate(100 100)" />
-                </svg>
-            </div>
-            <div className="fixed -left-24 -top-24 w-[500px] h-[500px] opacity-[0.02] pointer-events-none select-none rotate-45">
-                <div className="w-full h-full border-[40px] border-neutral-900 rounded-full" />
-            </div>
-
-            {/* Sidebar */}
-            <aside className="w-64 bg-white border-r border-neutral-100 flex flex-col fixed inset-y-0 left-0 z-50 overflow-hidden">
-                {/* Film Strip Detail */}
-                <div className="absolute right-0 top-0 bottom-0 w-1 flex flex-col gap-1 py-1 opacity-[0.05]">
-                    {Array.from({ length: 40 }).map((_, i) => (
-                        <div key={i} className="w-full h-1 bg-neutral-900 rounded-sm" />
-                    ))}
-                </div>
-
-                <div className="p-8">
-                    <Link href="/admin/dashboard" className="flex items-center gap-2 group">
-                        <div className="w-8 h-8 bg-neutral-900 rounded-lg flex items-center justify-center text-white transition-transform group-hover:scale-105">
-                            <Camera size={18} />
-                        </div>
-                        <h1 className="text-xl font-bold tracking-tight">
-                            SnapWrap
-                        </h1>
-                    </Link>
-                </div>
-
-                <div className="px-4 py-2">
-                    <div className="text-[10px] font-bold text-neutral-400 uppercase tracking-[0.2em] mb-4 ml-4">
-                        Main Menu
+    const SidebarContent = () => (
+        <>
+            <div className="p-6 flex items-center justify-between border-b border-[#ECE8DF]">
+                <Link href="/admin/dashboard" className="flex items-center gap-2 group" onClick={() => setSidebarOpen(false)}>
+                    <div className="w-8 h-8 bg-[#2A2724] rounded-lg flex items-center justify-center text-white transition-transform group-hover:scale-105">
+                        <Camera size={18} />
                     </div>
-                    <nav className="space-y-1">
-                        {navItems.map((item) => {
-                            const isActive = pathname.startsWith(item.href);
-                            const Icon = item.icon;
-                            return (
-                                <Link key={item.href} href={item.href}>
-                                    <div className={`
-                                        flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 group
-                                        ${isActive
-                                            ? 'bg-neutral-900 text-white shadow-md shadow-neutral-200'
-                                            : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900'}
-                                    `}>
-                                        <div className="flex items-center gap-3">
-                                            <Icon size={18} strokeWidth={isActive ? 2.5 : 2} />
-                                            <span className="text-sm font-semibold tracking-tight">{item.name}</span>
-                                        </div>
+                    <h1 className={`text-xl font-black tracking-tight ${playfair.className}`}>SnapWrap</h1>
+                </Link>
+                {/* Close button — mobile only */}
+                <button
+                    className="md:hidden p-1.5 rounded-lg text-neutral-400 hover:text-neutral-900 hover:bg-neutral-50 transition-all"
+                    onClick={() => setSidebarOpen(false)}
+                >
+                    <X size={18} />
+                </button>
+            </div>
+
+            <div className="px-4 py-2 flex-1 overflow-y-auto">
+                <div className="text-[10px] font-bold text-neutral-400 uppercase tracking-[0.2em] mb-3 ml-4">
+                    Main Menu
+                </div>
+                <nav className="space-y-1">
+                    {navItems.map((item) => {
+                        const isActive = pathname.startsWith(item.href);
+                        const Icon = item.icon;
+                        const badge = item.name === 'Profile' && pendingReviewCount > 0 ? pendingReviewCount : 0;
+                        return (
+                            <Link key={item.href} href={item.href} onClick={() => setSidebarOpen(false)}>
+                                <div className={`flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 group ${isActive ? 'bg-[#2A2724] text-white shadow-sm border border-[#2A2724]' : 'text-neutral-500 hover:bg-[#ECE8DF]/40 hover:text-[#2A2724]'}`}>
+                                    <div className="flex items-center gap-3">
+                                        <Icon size={18} strokeWidth={isActive ? 2.5 : 2} />
+                                        <span className="text-sm font-semibold tracking-tight">{item.name}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        {badge > 0 && (
+                                            <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-black ${isActive ? 'bg-white text-[#2A2724]' : 'bg-[#2A2724] text-white'}`}>
+                                                {badge}
+                                            </span>
+                                        )}
                                         {isActive && <ChevronRight size={14} className="opacity-50" />}
                                     </div>
-                                </Link>
-                            );
-                        })}
-                    </nav>
-                </div>
+                                </div>
+                            </Link>
+                        );
+                    })}
+                </nav>
+            </div>
 
-                <div className="mt-auto p-4 border-t border-neutral-50">
-                    <button
-                        onClick={handleLogout}
-                        className="flex items-center gap-3 px-4 py-3 w-full text-left rounded-xl text-neutral-400 hover:bg-red-50 hover:text-red-600 transition-all duration-200 group"
-                    >
-                        <LogOut size={18} />
-                        <span className="text-sm font-semibold tracking-tight">Sign Out</span>
-                    </button>
-                </div>
-            </aside>
+            {/* Plan badge + user */}
+            <div className="p-4 space-y-2 border-t border-[#ECE8DF]">
+                {profile && (
+                    <div className="px-4 py-2 rounded-xl bg-white border border-[#ECE8DF] flex items-center justify-between">
+                        <div>
+                            <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Plan</p>
+                            <p className="text-xs font-bold text-neutral-700">{getPlanLabel(profile.subscription_status)}</p>
+                        </div>
+                        <Link href="/admin/billing" className="text-[10px] font-black text-indigo-500 uppercase tracking-widest hover:text-indigo-700">
+                            Upgrade
+                        </Link>
+                    </div>
+                )}
+                {profile && (
+                    <div className="px-4 py-1">
+                        <p className="text-[10px] font-bold text-neutral-400 truncate">{profile.business_name || profile.username}</p>
+                    </div>
+                )}
+                <button
+                    onClick={handleLogout}
+                    className="flex items-center gap-3 px-4 py-3 w-full text-left rounded-xl text-neutral-400 hover:bg-red-50 hover:text-red-600 transition-all duration-200"
+                >
+                    <LogOut size={18} />
+                    <span className="text-sm font-semibold tracking-tight">Sign Out</span>
+                </button>
+            </div>
+        </>
+    );
 
-            {/* Main Content */}
-            <main className="flex-1 ml-64 min-h-screen">
-                <div className="max-w-6xl mx-auto p-12">
-                    {children}
+    return (
+        <AdminContext.Provider value={{ user, profile, refreshProfile, pendingReviewCount }}>
+            <div className={`min-h-screen flex bg-[#FAF8F5] text-[#2A2724] antialiased ${inter.className}`}>
+
+                {/* ── Mobile overlay ── */}
+                {sidebarOpen && (
+                    <div
+                        className="fixed inset-0 bg-[#2A2724]/20 backdrop-blur-sm z-40 md:hidden"
+                        onClick={() => setSidebarOpen(false)}
+                    />
+                )}
+
+                {/* ── Sidebar — desktop fixed, mobile slide-in ── */}
+                <aside className={`
+                    w-64 bg-white border-r border-[#ECE8DF] flex flex-col
+                    fixed inset-y-0 left-0 z-50 overflow-hidden
+                    transition-transform duration-300 ease-in-out
+                    ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+                    md:translate-x-0
+                `}>
+                    <SidebarContent />
+                </aside>
+
+                {/* ── Main ── */}
+                <div className="flex-1 md:ml-64 min-h-screen flex flex-col">
+                    {/* Mobile top bar */}
+                    <div className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-[#FAF8F5]/90 backdrop-blur-md border-b border-[#ECE8DF]">
+                        <Link href="/admin/dashboard" className="flex items-center gap-2">
+                            <div className="w-7 h-7 bg-[#2A2724] rounded-lg flex items-center justify-center">
+                                <Camera size={14} className="text-white" />
+                            </div>
+                            <span className={`font-black tracking-tight text-sm ${playfair.className}`}>SnapWrap</span>
+                        </Link>
+                        <button
+                            onClick={() => setSidebarOpen(true)}
+                            className="p-2 rounded-xl text-neutral-500 hover:bg-neutral-100 transition-all"
+                        >
+                            <Menu size={20} />
+                        </button>
+                    </div>
+
+                    <main className="flex-1">
+                        {pathname.includes('/appearance')
+                            ? children
+                            : <div className="max-w-6xl mx-auto p-5 md:p-12">{children}</div>
+                        }
+                    </main>
                 </div>
-            </main>
-        </div>
+            </div>
+        </AdminContext.Provider>
     );
 }
