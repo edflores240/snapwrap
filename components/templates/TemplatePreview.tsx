@@ -3,6 +3,8 @@
 import React from 'react';
 import { TemplateConfig } from './TemplateDesigner';
 import { textElementStyle } from '@/lib/template-text';
+import TemplateTextBody from './TemplateTextBody';
+import { useTemplateFonts } from '@/lib/fonts';
 import { stickerBoxStyle, stickerImageStyle } from '@/lib/template-render';
 
 interface TemplatePreviewProps {
@@ -22,6 +24,7 @@ export default function TemplatePreview({
     showLabels = true,
     className = '',
 }: TemplatePreviewProps) {
+    useTemplateFonts(tpl.textElements);
     const scale = width / 420; // 420 is the editor reference width
 
     return (
@@ -99,7 +102,7 @@ export default function TemplatePreview({
                     {/* Text elements */}
                     {tpl.textElements.map((el) => (
                         <div key={el.id} className="pointer-events-none" style={textElementStyle(el, n => `${n * scale}px`)}>
-                            {el.text}
+                            <TemplateTextBody el={el} len={n => `${n * scale}px`} />
                         </div>
                     ))}
 

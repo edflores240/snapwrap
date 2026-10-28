@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import {
     Save, Palette, Layout, Type, Star, Image as ImageIcon,
     ChevronRight, Plus, Trash2,
@@ -9,13 +9,18 @@ import {
     ZoomIn, ZoomOut, Lock, Unlock,
     AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
     AlignStartVertical, AlignCenterVertical, AlignEndVertical,
-    Square, Circle, Triangle, Star as StarIcon, Minus,
+    Square, Circle, Triangle, Star as StarIcon, Minus, Eraser, Loader2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
 import TemplateVisualizer, { TemplateVisualizerHandle } from './TemplateVisualizer';
 import { textElementStyle } from '@/lib/template-text';
+import TemplateTextBody from './TemplateTextBody';
+import FontPicker from './FontPicker';
+import SelectionBox, { ALL_HANDLES, SIDE_HANDLES } from './SelectionBox';
+import { useTemplateFonts } from '@/lib/fonts';
+import { removeBackground, type BackgroundRemovalProgress } from '@/lib/background-removal';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,6 +60,7 @@ interface TextElement {
     locked?: boolean;
     textStroke?: string;
     textStrokeWidth?: number;
+    curve?: number; // -100..100: + arches up, - dips down
 }
 
 interface PhotoSlot {
@@ -572,43 +578,14 @@ interface TemplateDesignerProps {
     onClose: () => void;
 }
 
-// ─── Draggable Text Hook ────────────────────────────────────────────────────
+type ElementKind = 'slot' | 'text' | 'sticker' | 'shape';
 
-function useDraggable(
-    previewRef: React.RefObject<HTMLDivElement | null>,
-    onMove: (id: string, x: number, y: number) => void,
-    onDragEnd?: () => void
-) {
-    const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
-
-    const startDrag = useCallback((e: React.MouseEvent, id: string, origX: number, origY: number) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragState.current = { id, startX: e.clientX, startY: e.clientY, origX, origY };
-
-        const onMouseMove = (ev: MouseEvent) => {
-            if (!dragState.current || !previewRef.current) return;
-            const rect = previewRef.current.getBoundingClientRect();
-            const dx = ((ev.clientX - dragState.current.startX) / rect.width) * 100;
-            const dy = ((ev.clientY - dragState.current.startY) / rect.height) * 100;
-            const newX = Math.max(0, Math.min(100, dragState.current.origX + dx));
-            const newY = Math.max(0, Math.min(100, dragState.current.origY + dy));
-            onMove(dragState.current.id, newX, newY);
-        };
-
-        const onMouseUp = () => {
-            dragState.current = null;
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
-            if (onDragEnd) onDragEnd();
-        };
-
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-    }, [previewRef, onMove, onDragEnd]);
-
-    return startDrag;
+/** Element ids carry their kind as a prefix; anything else is a photo slot */
+function kindOf(id: string): ElementKind {
+    return id.startsWith('stk_') ? 'sticker' : id.startsWith('txt_') ? 'text' : id.startsWith('shp_') ? 'shape' : 'slot';
 }
+
+const TAB_FOR_KIND: Record<ElementKind, DesignTab> = { slot: 'layout', text: 'text', sticker: 'stickers', shape: 'shapes' };
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -618,18 +595,36 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
         return { id: generateId(), ...PRESET_TEMPLATES[0] } as TemplateConfig;
     });
     const [activeTab, setActiveTab] = useState<DesignTab>('presets');
-    const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
-    const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
-    const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
-    const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
+    // One selection list for every element kind. The per-kind ids below are only set for a
+    // single selection, which is what the properties panels edit.
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const selectedIdsRef = useRef(selectedIds);
+    selectedIdsRef.current = selectedIds;
+    const soleId = selectedIds.length === 1 ? selectedIds[0] : null;
+    const selectedTextId = soleId && kindOf(soleId) === 'text' ? soleId : null;
+    const selectedStickerId = soleId && kindOf(soleId) === 'sticker' ? soleId : null;
+    const selectedSlotId = soleId && kindOf(soleId) === 'slot' ? soleId : null;
+    const selectedShapeId = soleId && kindOf(soleId) === 'shape' ? soleId : null;
+    // Selecting an id replaces the selection; null only drops that kind
+    const setSelectedTextId = useCallback((id: string | null) => setSelectedIds(prev => (id ? [id] : prev.filter(i => kindOf(i) !== 'text'))), []);
+    const setSelectedStickerId = useCallback((id: string | null) => setSelectedIds(prev => (id ? [id] : prev.filter(i => kindOf(i) !== 'sticker'))), []);
+    const setSelectedSlotId = useCallback((id: string | null) => setSelectedIds(prev => (id ? [id] : prev.filter(i => kindOf(i) !== 'slot'))), []);
+    const setSelectedShapeId = useCallback((id: string | null) => setSelectedIds(prev => (id ? [id] : prev.filter(i => kindOf(i) !== 'shape'))), []);
+    const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    const [rotatingId, setRotatingId] = useState<string | null>(null);
+    const [groupBox, setGroupBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
     const [backgroundImage, setBackgroundImage] = useState<string | null>(initialTemplate?.backgroundImage || null);
     const [userStickers, setUserStickers] = useState<{ id: string; image_url: string }[]>([]);
+    // Background removal: runs in the browser; the first run downloads the model
+    const [autoRemoveBg, setAutoRemoveBg] = useState(false);
+    const [bgRemoval, setBgRemoval] = useState<{ busy: boolean; message: string; error: string | null }>({ busy: false, message: '', error: null });
     const [loadingStickers, setLoadingStickers] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [dragLayerId, setDragLayerId] = useState<string | null>(null);
     const [dragOverLayerId, setDragOverLayerId] = useState<string | null>(null);
     const visualizerRef = useRef<TemplateVisualizerHandle>(null);
     // Always tracks the latest template value — used by drag/resize end callbacks
+    useTemplateFonts(template.textElements);
     const templateRef = useRef(template);
     templateRef.current = template;
 
@@ -916,10 +911,6 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         setSelectedTextId(null);
     }, [pushToHistory]);
 
-    const moveText = useCallback((id: string, x: number, y: number) => {
-        updateText(id, { x, y });
-    }, [updateText]);
-
     // Sticker operations
     const createDefaultSticker = (src: string): Sticker => ({
         id: `stk_${Date.now()}`,
@@ -966,10 +957,6 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         setSelectedStickerId(null);
     }, [pushToHistory]);
 
-    const moveSticker = useCallback((id: string, x: number, y: number) => {
-        updateSticker(id, { x, y });
-    }, [updateSticker]);
-
     // Shape operations
     const addShape = useCallback((shapeType: ShapeElement['shapeType']) => {
         const sh: ShapeElement = {
@@ -1015,23 +1002,6 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         setSelectedShapeId(null);
     }, [pushToHistory]);
 
-    const moveShape = useCallback((id: string, x: number, y: number) => {
-        updateShape(id, { x, y });
-    }, [updateShape]);
-
-    // Unified drag handler
-    const moveElement = useCallback((id: string, x: number, y: number) => {
-        if (id.startsWith('stk_')) {
-            moveSticker(id, x, y);
-        } else if (id.startsWith('txt_')) {
-            moveText(id, x, y);
-        } else if (id.startsWith('shp_')) {
-            moveShape(id, x, y);
-        } else {
-            updateSlot(id, { x, y });
-        }
-    }, [moveSticker, moveText, moveShape, updateSlot]);
-
     const resizeElement = useCallback((id: string, w: number, h: number, x: number, y: number) => {
         if (id.startsWith('stk_')) {
             updateSticker(id, { width: w * (template.width / 100), x, y });
@@ -1044,8 +1014,253 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         }
     }, [updateSticker, updateText, updateShape, updateSlot, template.width]);
 
-    const startDrag = useDraggable(previewRef, moveElement, () => pushToHistory(templateRef.current));
     const startResize = useResizable(previewRef, resizeElement, () => pushToHistory(templateRef.current));
+
+    // ── Selection, group move, rotate, marquee ──
+    const elementList = useCallback((t: TemplateConfig) => [
+        ...t.slots, ...(t.stickers || []), ...t.textElements, ...(t.shapes || []),
+    ] as { id: string; x: number; y: number; rotation: number; locked?: boolean }[], []);
+
+    const findElement = useCallback((id: string) => elementList(templateRef.current).find(el => el.id === id), [elementList]);
+
+    const setRotation = useCallback((id: string, rotation: number) => {
+        const kind = kindOf(id);
+        if (kind === 'slot') updateSlot(id, { rotation });
+        else if (kind === 'text') updateText(id, { rotation });
+        else if (kind === 'sticker') updateSticker(id, { rotation });
+        else updateShape(id, { rotation });
+    }, [updateSlot, updateText, updateSticker, updateShape]);
+
+    /** Mouse-down on an element: selects it (shift/ctrl/cmd adds to the selection) and drags the whole selection */
+    const beginElementPress = useCallback((e: React.MouseEvent, id: string) => {
+        e.stopPropagation();
+        const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+        let ids = selectedIdsRef.current;
+        if (additive) {
+            const adding = !ids.includes(id);
+            ids = adding ? [...ids, id] : ids.filter(i => i !== id);
+            setSelectedIds(ids);
+            if (!adding) return;
+        } else if (!ids.includes(id)) {
+            ids = [id];
+            setSelectedIds(ids);
+        }
+        if (ids.length === 1) setActiveTab(TAB_FOR_KIND[kindOf(id)]);
+        if (e.button !== 0) return;
+
+        const movable = ids.map(i => findElement(i)).filter((el): el is NonNullable<typeof el> => !!el && !el.locked);
+        if (movable.length === 0) return;
+        e.preventDefault();
+
+        const origin = new Map(movable.map(el => [el.id, { x: el.x, y: el.y }]));
+        const minX = Math.min(...movable.map(el => el.x));
+        const maxX = Math.max(...movable.map(el => el.x));
+        const minY = Math.min(...movable.map(el => el.y));
+        const maxY = Math.max(...movable.map(el => el.y));
+        const startX = e.clientX;
+        const startY = e.clientY;
+        let moved = false;
+
+        const onMove = (ev: MouseEvent) => {
+            if (!previewRef.current) return;
+            if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 3) return;
+            moved = true;
+            const rect = previewRef.current.getBoundingClientRect();
+            // Clamp the shared offset so the group keeps its shape at the edges
+            const dx = Math.max(-minX, Math.min(100 - maxX, ((ev.clientX - startX) / rect.width) * 100));
+            const dy = Math.max(-minY, Math.min(100 - maxY, ((ev.clientY - startY) / rect.height) * 100));
+            const shift = <T extends { id: string; x: number; y: number }>(el: T): T => {
+                const o = origin.get(el.id);
+                return o ? { ...el, x: o.x + dx, y: o.y + dy } : el;
+            };
+            setTemplate(prev => ({
+                ...prev,
+                slots: prev.slots.map(shift),
+                stickers: (prev.stickers || []).map(shift),
+                textElements: prev.textElements.map(shift),
+                shapes: (prev.shapes || []).map(shift),
+            }));
+        };
+        const onUp = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            if (moved) pushToHistory(templateRef.current);
+            else if (!additive && ids.length > 1) setSelectedIds([id]);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    }, [findElement, pushToHistory]);
+
+    /** Drag from a corner zone to rotate around the element's centre; Shift snaps to 15° */
+    const beginRotate = useCallback((e: React.MouseEvent, id: string) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const node = previewRef.current?.querySelector(`[data-el-id="${id}"]`);
+        const el = findElement(id);
+        if (!node || !el || el.locked) return;
+        const box = node.getBoundingClientRect();
+        const cx = box.left + box.width / 2;
+        const cy = box.top + box.height / 2;
+        const angleOf = (x: number, y: number) => (Math.atan2(y - cy, x - cx) * 180) / Math.PI;
+        const startAngle = angleOf(e.clientX, e.clientY);
+        const startRotation = el.rotation || 0;
+        setRotatingId(id);
+
+        const onMove = (ev: MouseEvent) => {
+            let deg = startRotation + (angleOf(ev.clientX, ev.clientY) - startAngle);
+            deg = ((((deg + 180) % 360) + 360) % 360) - 180;
+            if (ev.shiftKey) deg = Math.round(deg / 15) * 15;
+            else {
+                // Magnet to the right angles
+                const nearest = Math.round(deg / 45) * 45;
+                if (Math.abs(deg - nearest) < 3) deg = nearest;
+            }
+            setRotation(id, Math.round(deg));
+        };
+        const onUp = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            setRotatingId(null);
+            pushToHistory(templateRef.current);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    }, [findElement, setRotation, pushToHistory]);
+
+    /** Drag on empty canvas to box-select every element the rectangle touches */
+    const beginMarquee = useCallback((e: React.MouseEvent) => {
+        if (e.button !== 0 || e.target !== e.currentTarget || !previewRef.current) return;
+        e.preventDefault();
+        const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+        const base = additive ? selectedIdsRef.current : [];
+        const startX = e.clientX;
+        const startY = e.clientY;
+        let dragging = false;
+
+        const toLocal = (clientX: number, clientY: number) => {
+            const rect = previewRef.current!.getBoundingClientRect();
+            const k = previewRef.current!.offsetWidth / rect.width;
+            return { x: (clientX - rect.left) * k, y: (clientY - rect.top) * k };
+        };
+        const hits = (ev: MouseEvent) => {
+            const l = Math.min(startX, ev.clientX), r = Math.max(startX, ev.clientX);
+            const t = Math.min(startY, ev.clientY), b = Math.max(startY, ev.clientY);
+            const found: string[] = [];
+            previewRef.current?.querySelectorAll('[data-el-id]').forEach(node => {
+                const n = node.getBoundingClientRect();
+                if (n.left < r && n.right > l && n.top < b && n.bottom > t) found.push(node.getAttribute('data-el-id')!);
+            });
+            return found;
+        };
+        const onMove = (ev: MouseEvent) => {
+            if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 3) return;
+            dragging = true;
+            const a = toLocal(startX, startY);
+            const b = toLocal(ev.clientX, ev.clientY);
+            setMarquee({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) });
+            setSelectedIds(Array.from(new Set([...base, ...hits(ev)])));
+        };
+        const onUp = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            setMarquee(null);
+            if (!dragging) {
+                if (!additive) setSelectedIds([]);
+                return;
+            }
+            const ids = selectedIdsRef.current;
+            if (ids.length === 1) setActiveTab(TAB_FOR_KIND[kindOf(ids[0])]);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    }, []);
+
+    const deleteSelected = useCallback(() => {
+        const doomed = new Set(selectedIdsRef.current.filter(id => !findElement(id)?.locked));
+        if (doomed.size === 0) return;
+        setTemplate(prev => {
+            const next = {
+                ...prev,
+                slots: prev.slots.filter(el => !doomed.has(el.id)),
+                stickers: (prev.stickers || []).filter(el => !doomed.has(el.id)),
+                textElements: prev.textElements.filter(el => !doomed.has(el.id)),
+                shapes: (prev.shapes || []).filter(el => !doomed.has(el.id)),
+            };
+            pushToHistory(next);
+            return next;
+        });
+        setSelectedIds([]);
+    }, [findElement, pushToHistory]);
+
+    const duplicateSelected = useCallback(() => {
+        const ids = new Set(selectedIdsRef.current);
+        if (ids.size === 0) return;
+        const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const copies: string[] = [];
+        const offset = <T extends { x: number; y: number }>(el: T) => ({ ...el, x: Math.min(el.x + 4, 96), y: Math.min(el.y + 4, 96) });
+        setTemplate(prev => {
+            let slotNo = prev.slots.reduce((m, s) => Math.max(m, parseInt(s.id.replace(/\D/g, ''), 10) || 0), 0);
+            const next = {
+                ...prev,
+                slots: [...prev.slots, ...prev.slots.filter(el => ids.has(el.id)).map(el => {
+                    const id = `s${++slotNo}`;
+                    copies.push(id);
+                    return { ...offset(el), id };
+                })],
+                stickers: [...(prev.stickers || []), ...(prev.stickers || []).filter(el => ids.has(el.id)).map((el, i) => {
+                    const id = `stk_${stamp}_${i}`;
+                    copies.push(id);
+                    return { ...offset(el), id };
+                })],
+                textElements: [...prev.textElements, ...prev.textElements.filter(el => ids.has(el.id)).map((el, i) => {
+                    const id = `txt_${stamp}_${i}`;
+                    copies.push(id);
+                    return { ...offset(el), id };
+                })],
+                shapes: [...(prev.shapes || []), ...(prev.shapes || []).filter(el => ids.has(el.id)).map((el, i) => {
+                    const id = `shp_${stamp}_${i}`;
+                    copies.push(id);
+                    return { ...offset(el), id };
+                })],
+            };
+            pushToHistory(next);
+            return next;
+        });
+        setSelectedIds(copies);
+    }, [pushToHistory]);
+
+    const toggleLockSelected = useCallback(() => {
+        const ids = new Set(selectedIdsRef.current);
+        setTemplate(prev => {
+            const lock = ![...prev.slots, ...(prev.stickers || []), ...prev.textElements, ...(prev.shapes || [])].filter(el => ids.has(el.id)).every(el => el.locked);
+            const flip = <T extends { id: string; locked?: boolean }>(el: T): T => (ids.has(el.id) ? { ...el, locked: lock } : el);
+            const next = {
+                ...prev,
+                slots: prev.slots.map(flip),
+                stickers: (prev.stickers || []).map(flip),
+                textElements: prev.textElements.map(flip),
+                shapes: (prev.shapes || []).map(flip),
+            };
+            pushToHistory(next);
+            return next;
+        });
+    }, [pushToHistory]);
+
+    // Bounding box of a multi-selection, measured from the rendered elements
+    useLayoutEffect(() => {
+        const root = previewRef.current;
+        if (!root || selectedIds.length < 2) { setGroupBox(null); return; }
+        const rect = root.getBoundingClientRect();
+        const k = root.offsetWidth / rect.width;
+        let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+        selectedIds.forEach(id => {
+            const node = root.querySelector(`[data-el-id="${id}"]`);
+            if (!node) return;
+            const n = node.getBoundingClientRect();
+            l = Math.min(l, n.left); t = Math.min(t, n.top); r = Math.max(r, n.right); b = Math.max(b, n.bottom);
+        });
+        setGroupBox(Number.isFinite(l) ? { x: (l - rect.left) * k, y: (t - rect.top) * k, w: (r - l) * k, h: (b - t) * k } : null);
+    }, [selectedIds, template, workspaceZoom]);
 
     // ── Context Menu Handlers ──
     const openContextMenu = useCallback((e: React.MouseEvent, elementId: string, elementType: 'slot' | 'text' | 'sticker' | 'shape') => {
@@ -1053,10 +1268,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         e.stopPropagation();
         setContextMenu({ x: e.clientX, y: e.clientY, elementId, elementType });
         // Auto-select the element
-        if (elementType === 'slot') { setSelectedSlotId(elementId); setSelectedTextId(null); setSelectedStickerId(null); setSelectedShapeId(null); }
-        else if (elementType === 'text') { setSelectedTextId(elementId); setSelectedSlotId(null); setSelectedStickerId(null); setSelectedShapeId(null); }
-        else if (elementType === 'sticker') { setSelectedStickerId(elementId); setSelectedSlotId(null); setSelectedTextId(null); setSelectedShapeId(null); }
-        else if (elementType === 'shape') { setSelectedShapeId(elementId); setSelectedSlotId(null); setSelectedTextId(null); setSelectedStickerId(null); }
+        if (!selectedIdsRef.current.includes(elementId)) setSelectedIds([elementId]);
     }, []);
 
     const duplicateElement = useCallback((id: string, type: 'slot' | 'text' | 'sticker' | 'shape') => {
@@ -1320,23 +1532,128 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                 redo();
             }
 
-            // Delete (skip locked elements)
+            const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName || '');
+            if (typing) return;
+            const mod = e.ctrlKey || e.metaKey;
+
             if (e.key === 'Delete' || e.key === 'Backspace') {
-                if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-                if (selectedSlotId && !templateRef.current.slots.find(s => s.id === selectedSlotId)?.locked) deleteSlot(selectedSlotId);
-                else if (selectedTextId && !templateRef.current.textElements.find(t => t.id === selectedTextId)?.locked) deleteTextElement(selectedTextId);
-                else if (selectedStickerId && !(templateRef.current.stickers || []).find(s => s.id === selectedStickerId)?.locked) deleteSticker(selectedStickerId);
-                else if (selectedShapeId && !(templateRef.current.shapes || []).find(s => s.id === selectedShapeId)?.locked) deleteShape(selectedShapeId);
+                e.preventDefault();
+                deleteSelected();
+            } else if (mod && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                setSelectedIds(elementList(templateRef.current).map(el => el.id));
+            } else if (mod && e.key.toLowerCase() === 'd') {
+                e.preventDefault();
+                duplicateSelected();
+            } else if (e.key === 'Escape') {
+                setSelectedIds([]);
+            } else if (e.key.startsWith('Arrow') && selectedIdsRef.current.length > 0) {
+                // Nudge the selection; Shift moves further
+                e.preventDefault();
+                const step = e.shiftKey ? 2 : 0.4;
+                const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+                const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+                const ids = new Set(selectedIdsRef.current.filter(id => !findElement(id)?.locked));
+                const move = <T extends { id: string; x: number; y: number }>(el: T): T =>
+                    ids.has(el.id) ? { ...el, x: Math.max(0, Math.min(100, el.x + dx)), y: Math.max(0, Math.min(100, el.y + dy)) } : el;
+                setTemplate(prev => {
+                    const next = {
+                        ...prev,
+                        slots: prev.slots.map(move),
+                        stickers: (prev.stickers || []).map(move),
+                        textElements: prev.textElements.map(move),
+                        shapes: (prev.shapes || []).map(move),
+                    };
+                    pushToHistory(next);
+                    return next;
+                });
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [undo, redo, selectedSlotId, selectedTextId, selectedStickerId, selectedShapeId, deleteSlot, deleteTextElement, deleteSticker, deleteShape]);
+    }, [undo, redo, deleteSelected, duplicateSelected, elementList, findElement, pushToHistory]);
+
+    const describeProgress = (p: BackgroundRemovalProgress) =>
+        p.stage === 'download'
+            ? `Downloading AI model… ${Math.round(p.value * 100)}% (first time only)`
+            : 'Removing background…';
+
+    /** Runs background removal on an image blob, reporting progress into the panel. */
+    const cutOut = async (blob: Blob): Promise<Blob> => {
+        setBgRemoval({ busy: true, message: 'Starting…', error: null });
+        try {
+            return await removeBackground(blob, p => setBgRemoval({ busy: true, message: describeProgress(p), error: null }));
+        } catch (err) {
+            setBgRemoval({ busy: false, message: '', error: err instanceof Error ? err.message : 'Background removal failed' });
+            throw err;
+        } finally {
+            setBgRemoval(prev => ({ ...prev, busy: false, message: '' }));
+        }
+    };
+
+    /** Stores an image in the user's sticker library and returns its public URL (or null when not signed in). */
+    const saveToLibrary = async (blob: Blob, fileName: string): Promise<string | null> => {
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return null;
+            const path = `stickers/${user.id}/${Date.now()}_${fileName}`;
+            const { error: uploadError } = await supabase.storage.from('booth-photos').upload(path, blob, { contentType: blob.type || 'image/png', upsert: false });
+            if (uploadError) throw uploadError;
+            const publicUrl = supabase.storage.from('booth-photos').getPublicUrl(path).data.publicUrl;
+            const { data: row, error: insertError } = await supabase
+                .from('user_stickers')
+                .insert({ user_id: user.id, storage_path: path, image_url: publicUrl })
+                .select('id, image_url')
+                .single();
+            if (!insertError && row) setUserStickers(prev => [row, ...prev]);
+            return publicUrl;
+        } catch (err) {
+            console.error('Error saving sticker:', err);
+            return null;
+        }
+    };
+
+    const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result as string);
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(blob);
+    });
+
+    /** Replaces the selected sticker's picture with a transparent cut-out of itself. */
+    const removeStickerBackground = async (stickerId: string) => {
+        const sticker = (templateRef.current.stickers || []).find(s => s.id === stickerId);
+        if (!sticker || bgRemoval.busy) return;
+        try {
+            const source = await (await fetch(sticker.src)).blob();
+            const cut = await cutOut(source);
+            const src = (await saveToLibrary(cut, 'cutout.png')) ?? (await blobToDataUrl(cut));
+            setTemplate(prev => {
+                const next = { ...prev, stickers: (prev.stickers || []).map(s => s.id === stickerId ? { ...s, src } : s) };
+                pushToHistory(next);
+                return next;
+            });
+        } catch {
+            // cutOut already put the message in the panel
+        }
+    };
 
     const handleStickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+
+        if (autoRemoveBg) {
+            e.target.value = '';
+            try {
+                const cut = await cutOut(file);
+                const base = file.name.replace(/\.[^.]+$/, '');
+                addSticker((await saveToLibrary(cut, `${base}.png`)) ?? (await blobToDataUrl(cut)));
+            } catch {
+                // cutOut already put the message in the panel
+            }
+            return;
+        }
 
         // Read and add to current template immediately
         const reader = new FileReader();
@@ -2095,14 +2412,29 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
 
                                             <div className="space-y-3">
                                                 <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Family</label>
-                                                <select value={selectedText.fontFamily} onChange={(e) => updateText(selectedText.id, { fontFamily: e.target.value })} className="w-full bg-neutral-900 border border-white/5 rounded-xl px-4 py-3 text-xs font-black text-white appearance-none">
-                                                    <option value="sans-serif">System Sans</option>
-                                                    <option value="serif">System Serif</option>
-                                                    <option value="monospace">Monospace</option>
-                                                    <option value="cursive">Script</option>
-                                                    <option value="Georgia, serif">Georgia</option>
-                                                    <option value="'Playfair Display', serif">Playfair</option>
-                                                </select>
+                                                <FontPicker
+                                                    value={selectedText.fontFamily}
+                                                    currentWeight={selectedText.fontWeight}
+                                                    onChange={(fontFamily, fontWeight) => { updateText(selectedText.id, { fontFamily, fontWeight }); pushToHistory(templateRef.current); }}
+                                                />
+                                            </div>
+
+                                            <div className="space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Bend</label>
+                                                    <span className="text-[9px] font-black text-white">
+                                                        {(selectedText.curve ?? 0) === 0 ? 'Straight' : `${selectedText.curve! > 0 ? 'Arch' : 'Dip'} ${Math.abs(selectedText.curve!)}%`}
+                                                    </span>
+                                                </div>
+                                                <input type="range" min={-100} max={100} step={1} value={selectedText.curve ?? 0}
+                                                    onChange={(e) => updateText(selectedText.id, { curve: +e.target.value })}
+                                                    onMouseUp={() => pushToHistory(templateRef.current)}
+                                                    className="w-full accent-blue-500" />
+                                                <div className="flex justify-between text-[7px] font-black text-neutral-600 uppercase tracking-widest">
+                                                    <span>Dip ∪</span>
+                                                    <button type="button" onClick={() => { updateText(selectedText.id, { curve: 0 }); pushToHistory(templateRef.current); }} className="hover:text-white transition-colors">Reset</button>
+                                                    <span>Arch ∩</span>
+                                                </div>
                                             </div>
 
                                             <div className="space-y-3">
@@ -2111,6 +2443,14 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                     <span className="text-[9px] font-black text-white">{selectedText.letterSpacing || 0}px</span>
                                                 </div>
                                                 <input type="range" min={0} max={20} value={selectedText.letterSpacing || 0} onChange={(e) => updateText(selectedText.id, { letterSpacing: +e.target.value })} className="w-full accent-blue-500" />
+                                            </div>
+
+                                            <div className="space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Rotation</label>
+                                                    <span className="text-[9px] font-black text-white">{selectedText.rotation || 0}°</span>
+                                                </div>
+                                                <input type="range" min={-180} max={180} value={selectedText.rotation || 0} onChange={(e) => updateText(selectedText.id, { rotation: +e.target.value })} onMouseUp={() => pushToHistory(templateRef.current)} className="w-full accent-blue-500" />
                                             </div>
 
                                             <div className="space-y-3">
@@ -2194,6 +2534,19 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                         </div>
                                     </div>
 
+                                    <div className="space-y-2">
+                                        <label className="flex items-center gap-2 text-[8px] font-black text-neutral-400 uppercase tracking-widest cursor-pointer">
+                                            <input type="checkbox" checked={autoRemoveBg} onChange={(e) => setAutoRemoveBg(e.target.checked)} className="accent-blue-500" />
+                                            Remove background on import
+                                        </label>
+                                        {bgRemoval.busy && (
+                                            <div className="flex items-center gap-2 text-[8px] font-black text-blue-400 uppercase tracking-widest">
+                                                <Loader2 size={12} className="animate-spin" /> {bgRemoval.message}
+                                            </div>
+                                        )}
+                                        {bgRemoval.error && <p className="text-[8px] font-bold text-red-400 leading-snug">{bgRemoval.error}</p>}
+                                    </div>
+
                                     {loadingStickers ? (
                                         <div className="grid grid-cols-3 gap-2">
                                             {[1, 2, 3].map(i => (
@@ -2223,6 +2576,15 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                     <Trash2 size={16} />
                                                 </button>
                                             </div>
+
+                                            <button
+                                                onClick={() => removeStickerBackground(selectedSticker.id)}
+                                                disabled={bgRemoval.busy}
+                                                className="w-full flex items-center justify-center gap-2 h-10 rounded-xl bg-blue-600/10 border border-blue-500/30 text-blue-400 hover:bg-blue-600/20 transition-all text-[8px] font-black uppercase tracking-widest disabled:opacity-50"
+                                            >
+                                                {bgRemoval.busy ? <Loader2 size={14} className="animate-spin" /> : <Eraser size={14} />}
+                                                {bgRemoval.busy ? bgRemoval.message : 'Remove background'}
+                                            </button>
 
                                             {/* Dimensions */}
                                             <div className="space-y-4">
@@ -2305,6 +2667,16 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                         <span className="text-[9px] font-black text-white">{selectedSticker.rotation}deg</span>
                                                     </div>
                                                     <input type="range" min={-180} max={180} value={selectedSticker.rotation} onChange={(e) => updateSticker(selectedSticker.id, { rotation: +e.target.value })} onMouseUp={() => pushToHistory(template)} className="w-full accent-blue-500" />
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        {[{ label: '-90°', by: -90 }, { label: '+90°', by: 90 }].map(q => (
+                                                            <button key={q.label} onClick={() => {
+                                                                const r = ((((selectedSticker.rotation + q.by + 180) % 360) + 360) % 360) - 180;
+                                                                updateSticker(selectedSticker.id, { rotation: r });
+                                                                pushToHistory(templateRef.current);
+                                                            }} className="h-8 rounded-lg bg-neutral-900 border border-white/5 text-neutral-400 hover:border-blue-500/50 hover:text-white transition-all text-[8px] font-black uppercase tracking-widest">{q.label}</button>
+                                                        ))}
+                                                        <button onClick={() => { updateSticker(selectedSticker.id, { rotation: 0 }); pushToHistory(templateRef.current); }} className="h-8 rounded-lg bg-neutral-900 border border-white/5 text-neutral-400 hover:border-blue-500/50 hover:text-white transition-all text-[8px] font-black uppercase tracking-widest">Reset</button>
+                                                    </div>
                                                 </div>
                                                 <div className="space-y-3">
                                                     <div className="flex items-center justify-between">
@@ -2705,7 +3077,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                 borderRadius: template.borderRadius,
                                 overflow: 'hidden'
                             }}
-                            onClick={() => { setSelectedTextId(null); setSelectedStickerId(null); setSelectedSlotId(null); setSelectedShapeId(null); }}
+                            onMouseDown={beginMarquee}
                         >
                             {/* Background overlay tint */}
                             {template.backgroundOverlay && (
@@ -2727,7 +3099,8 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                     const slot = item.data;
                                     return (
                                         <div key={slot.id}
-                                            className={`absolute flex items-center justify-center group border-2 transition-shadow ${slot.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedSlotId === slot.id ? 'border-blue-500 shadow-lg shadow-blue-500/20' : 'border-white/10 hover:border-white/30'}`}
+                                            className={`absolute flex items-center justify-center group border-2 transition-shadow ${slot.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedIds.includes(slot.id) ? 'border-white/10' : 'border-white/10 hover:border-[#5b8cff]/70'}`}
+                                            data-el-id={slot.id}
                                             style={{
                                                 left: `${slot.x}%`,
                                                 top: `${slot.y}%`,
@@ -2739,14 +3112,8 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 zIndex: item.zIndex,
                                                 opacity: slot.opacity ?? 1,
                                             }}
-                                            onMouseDown={slot.locked ? undefined : (e) => {
-                                                setSelectedSlotId(slot.id);
-                                                setSelectedTextId(null);
-                                                setSelectedStickerId(null);
-                                                setActiveTab('layout');
-                                                startDrag(e, slot.id, slot.x, slot.y);
-                                            }}
-                                            onClick={(e) => { e.stopPropagation(); setSelectedSlotId(slot.id); setSelectedTextId(null); setSelectedStickerId(null); setActiveTab('layout'); }}
+                                            onMouseDown={(e) => beginElementPress(e, slot.id)}
+                                            onClick={(e) => e.stopPropagation()}
                                             onContextMenu={(e) => openContextMenu(e, slot.id, 'slot')}
                                         >
                                             <div className="flex flex-col items-center gap-2">
@@ -2756,28 +3123,16 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             {slot.locked && (
                                                 <div className="absolute top-1 right-1 text-white/30"><Lock size={10} /></div>
                                             )}
-                                            {selectedSlotId === slot.id && (
-                                                <>
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); deleteSlot(slot.id); }}
-                                                        className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-lg z-[100]"
-                                                    >
-                                                        <Trash2 size={12} />
-                                                    </button>
-                                                    {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
-                                                        <div
-                                                            key={type}
-                                                            className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[110] cursor-${type}-resize hover:scale-125 transition-transform`}
-                                                            style={{
-                                                                top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
-                                                                left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
-                                                                marginTop: type === 'e' || type === 'w' ? -6 : 0,
-                                                                marginLeft: type === 'n' || type === 's' ? -6 : 0,
-                                                            }}
-                                                            onMouseDown={(e) => startResize(e, slot.id, type, slot.x, slot.y, slot.width, slot.height)}
-                                                        />
-                                                    ))}
-                                                </>
+                                            {selectedIds.includes(slot.id) && (
+                                                <SelectionBox
+                                                    zoom={workspaceZoom}
+                                                    handles={selectedIds.length === 1 && !slot.locked ? ALL_HANDLES : []}
+                                                    rotatable={selectedIds.length === 1 && !slot.locked}
+                                                    rotation={slot.rotation || 0}
+                                                    rotating={rotatingId === slot.id}
+                                                    onResizeStart={(e, type) => startResize(e, slot.id, type, slot.x, slot.y, slot.width, slot.height)}
+                                                    onRotateStart={(e) => beginRotate(e, slot.id)}
+                                                />
                                             )}
                                         </div>
                                     );
@@ -2788,7 +3143,8 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                     return (
                                         <div
                                             key={stk.id}
-                                            className={`absolute pointer-events-auto group ${stk.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedStickerId === stk.id ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent' : ''}`}
+                                            className={`absolute pointer-events-auto group ${stk.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedIds.includes(stk.id) ? '' : 'hover:shadow-[0_0_0_1px_rgba(91,140,255,0.7)]'}`}
+                                            data-el-id={stk.id}
                                             style={{
                                                 left: `${stk.x}%`,
                                                 top: `${stk.y}%`,
@@ -2797,45 +3153,33 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 transform: `translate(-50%, -50%) rotate(${stk.rotation}deg) scaleX(${stk.flipX ? -1 : 1}) scaleY(${stk.flipY ? -1 : 1})`,
                                                 zIndex: item.zIndex,
                                                 opacity: stk.opacity ?? 1,
-                                                overflow: (stk.height || 0) > 0 ? 'hidden' : 'visible',
                                             }}
-                                            onMouseDown={stk.locked ? undefined : (e) => {
-                                                e.stopPropagation();
-                                                setSelectedStickerId(stk.id);
-                                                setSelectedTextId(null);
-                                                setSelectedSlotId(null);
-                                                setActiveTab('stickers');
-                                                startDrag(e, stk.id, stk.x, stk.y);
-                                            }}
-                                            onClick={(e) => { e.stopPropagation(); setSelectedStickerId(stk.id); setSelectedTextId(null); setSelectedSlotId(null); setActiveTab('stickers'); }}
+                                            onMouseDown={(e) => beginElementPress(e, stk.id)}
+                                            onClick={(e) => e.stopPropagation()}
                                             onContextMenu={(e) => openContextMenu(e, stk.id, 'sticker')}
                                         >
                                             {stk.locked && (
                                                 <div className="absolute top-0 right-0 text-white/40 z-10"><Lock size={10} /></div>
                                             )}
-                                            <Image
-                                                src={stk.src} alt="" width={stk.width} height={(stk.height || 0) > 0 ? stk.height : stk.width}
-                                                className={`w-full ${(stk.height || 0) > 0 ? 'h-full object-cover' : 'h-full object-contain'}`}
-                                                style={(stk.height || 0) > 0 ? { objectPosition: `${50 + (stk.cropX || 0)}% ${50 + (stk.cropY || 0)}%` } : undefined}
-                                                unoptimized
-                                                draggable={false}
-                                            />
-                                            {selectedStickerId === stk.id && (
-                                                <>
-                                                    {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
-                                                        <div
-                                                            key={type}
-                                                            className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[120] cursor-${type}-resize shadow-lg hover:scale-125 transition-transform`}
-                                                            style={{
-                                                                top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
-                                                                left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
-                                                                marginTop: type === 'e' || type === 'w' ? -6 : 0,
-                                                                marginLeft: type === 'n' || type === 's' ? -6 : 0,
-                                                            }}
-                                                            onMouseDown={(e) => startResize(e, stk.id, type, stk.x, stk.y, stk.width / (template.width / 100), 0)}
-                                                        />
-                                                    ))}
-                                                </>
+                                            <div className="w-full h-full" style={{ overflow: (stk.height || 0) > 0 ? 'hidden' : 'visible' }}>
+                                                <Image
+                                                    src={stk.src} alt="" width={stk.width} height={(stk.height || 0) > 0 ? stk.height : stk.width}
+                                                    className={`w-full ${(stk.height || 0) > 0 ? 'h-full object-cover' : 'h-full object-contain'}`}
+                                                    style={(stk.height || 0) > 0 ? { objectPosition: `${50 + (stk.cropX || 0)}% ${50 + (stk.cropY || 0)}%` } : undefined}
+                                                    unoptimized
+                                                    draggable={false}
+                                                />
+                                            </div>
+                                            {selectedIds.includes(stk.id) && (
+                                                <SelectionBox
+                                                    zoom={workspaceZoom}
+                                                    handles={selectedIds.length === 1 && !stk.locked ? ALL_HANDLES : []}
+                                                    rotatable={selectedIds.length === 1 && !stk.locked}
+                                                    rotation={stk.rotation || 0}
+                                                    rotating={rotatingId === stk.id}
+                                                    onResizeStart={(e, type) => startResize(e, stk.id, type, stk.x, stk.y, stk.width / (template.width / 100), 0)}
+                                                    onRotateStart={(e) => beginRotate(e, stk.id)}
+                                                />
                                             )}
                                         </div>
                                     );
@@ -2865,7 +3209,8 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                     return (
                                         <div
                                             key={shp.id}
-                                            className={`absolute group ${shp.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedShapeId === shp.id ? 'ring-2 ring-emerald-500 ring-offset-1 ring-offset-transparent' : ''}`}
+                                            className={`absolute group ${shp.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedIds.includes(shp.id) ? '' : 'hover:shadow-[0_0_0_1px_rgba(91,140,255,0.7)]'}`}
+                                            data-el-id={shp.id}
                                             style={{
                                                 left: `${shp.x}%`,
                                                 top: `${shp.y}%`,
@@ -2880,39 +3225,22 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                     border: shp.strokeWidth ? `${shp.strokeWidth}px solid ${shp.strokeColor}` : 'none',
                                                 } : {}),
                                             }}
-                                            onMouseDown={shp.locked ? undefined : (e) => {
-                                                e.stopPropagation();
-                                                setSelectedShapeId(shp.id);
-                                                setSelectedTextId(null);
-                                                setSelectedSlotId(null);
-                                                setSelectedStickerId(null);
-                                                setActiveTab('shapes');
-                                                startDrag(e, shp.id, shp.x, shp.y);
-                                            }}
-                                            onClick={(e) => { e.stopPropagation(); setSelectedShapeId(shp.id); setSelectedTextId(null); setSelectedSlotId(null); setSelectedStickerId(null); setActiveTab('shapes'); }}
+                                            onMouseDown={(e) => beginElementPress(e, shp.id)}
+                                            onClick={(e) => e.stopPropagation()}
                                             onContextMenu={(e) => openContextMenu(e, shp.id, 'shape')}
                                         >
                                             {svgShape}
                                             {shp.locked && <div className="absolute top-0 right-0 text-white/40"><Lock size={10} /></div>}
-                                            {selectedShapeId === shp.id && (
-                                                <>
-                                                    <button onClick={(e) => { e.stopPropagation(); deleteShape(shp.id); }}
-                                                        className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-lg z-[100]">
-                                                        <Trash2 size={12} />
-                                                    </button>
-                                                    {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map(type => (
-                                                        <div key={type}
-                                                            className={`absolute w-3 h-3 bg-white border-2 border-emerald-500 rounded-full z-[110] cursor-${type}-resize hover:scale-125 transition-transform`}
-                                                            style={{
-                                                                top: type.includes('n') ? -6 : type.includes('s') ? 'calc(100% - 6px)' : '50%',
-                                                                left: type.includes('w') ? -6 : type.includes('e') ? 'calc(100% - 6px)' : '50%',
-                                                                marginTop: type === 'e' || type === 'w' ? -6 : 0,
-                                                                marginLeft: type === 'n' || type === 's' ? -6 : 0,
-                                                            }}
-                                                            onMouseDown={(e) => startResize(e, shp.id, type, shp.x, shp.y, shp.width, shp.height)}
-                                                        />
-                                                    ))}
-                                                </>
+                                            {selectedIds.includes(shp.id) && (
+                                                <SelectionBox
+                                                    zoom={workspaceZoom}
+                                                    handles={selectedIds.length === 1 && !shp.locked ? ALL_HANDLES : []}
+                                                    rotatable={selectedIds.length === 1 && !shp.locked}
+                                                    rotation={shp.rotation || 0}
+                                                    rotating={rotatingId === shp.id}
+                                                    onResizeStart={(e, type) => startResize(e, shp.id, type, shp.x, shp.y, shp.width, shp.height)}
+                                                    onRotateStart={(e) => beginRotate(e, shp.id)}
+                                                />
                                             )}
                                         </div>
                                     );
@@ -2924,51 +3252,76 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                 return (
                                     <div
                                         key={txt.id}
-                                        className={`absolute pointer-events-auto px-2 py-1 group ${txt.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedTextId === txt.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''}`}
+                                        className={`absolute pointer-events-auto px-2 py-1 group ${txt.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedIds.includes(txt.id) ? '' : 'hover:shadow-[0_0_0_1px_rgba(91,140,255,0.7)]'}`}
+                                        data-el-id={txt.id}
                                         style={textElementStyle(txt, n => `${n}px`, item.zIndex)}
-                                        onMouseDown={txt.locked ? undefined : (e) => {
-                                            e.stopPropagation();
-                                            setSelectedTextId(txt.id);
-                                            setSelectedStickerId(null);
-                                            setSelectedSlotId(null);
-                                            setActiveTab('text');
-                                            startDrag(e, txt.id, txt.x, txt.y);
-                                        }}
-                                        onClick={(e) => { e.stopPropagation(); setSelectedTextId(txt.id); setSelectedStickerId(null); setSelectedSlotId(null); setActiveTab('text'); }}
+                                        onMouseDown={(e) => beginElementPress(e, txt.id)}
+                                        onClick={(e) => e.stopPropagation()}
                                         onContextMenu={(e) => openContextMenu(e, txt.id, 'text')}
                                     >
-                                        <span style={{ whiteSpace: 'pre-wrap' }}>{txt.text}</span>
+                                        <TemplateTextBody el={txt} len={n => `${n}px`} />
                                         {txt.locked && (
                                             <div className="absolute top-0 right-0 text-white/40"><Lock size={10} /></div>
                                         )}
-                                        {selectedTextId === txt.id && (
-                                            <>
-                                                {['e', 'w'].map(type => (
-                                                    <div
-                                                        key={type}
-                                                        className={`absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-full z-[120] cursor-${type}-resize shadow-lg hover:scale-125 transition-transform`}
-                                                        style={{
-                                                            top: '50%',
-                                                            left: type === 'w' ? -6 : 'calc(100% - 6px)',
-                                                            transform: 'translateY(-50%)',
-                                                        }}
-                                                        onMouseDown={(e) => startResize(e, txt.id, type, txt.x, txt.y, txt.fontSize, 0)}
-                                                    />
-                                                ))}
-                                            </>
+                                        {selectedIds.includes(txt.id) && (
+                                            <SelectionBox
+                                                zoom={workspaceZoom}
+                                                handles={selectedIds.length === 1 && !txt.locked ? SIDE_HANDLES : []}
+                                                rotatable={selectedIds.length === 1 && !txt.locked}
+                                                rotation={txt.rotation || 0}
+                                                rotating={rotatingId === txt.id}
+                                                onResizeStart={(e, type) => startResize(e, txt.id, type, txt.x, txt.y, txt.fontSize, 0)}
+                                                onRotateStart={(e) => beginRotate(e, txt.id)}
+                                            />
                                         )}
                                     </div>
                                 );
                             })}
+
+                            {groupBox && (
+                                <div
+                                    className="absolute pointer-events-none"
+                                    style={{
+                                        left: groupBox.x, top: groupBox.y, width: groupBox.w, height: groupBox.h,
+                                        border: `${1 / workspaceZoom}px dashed #5b8cff`,
+                                        background: 'rgba(91,140,255,0.06)',
+                                        zIndex: 9000,
+                                    }}
+                                />
+                            )}
+                            {marquee && (
+                                <div
+                                    className="absolute pointer-events-none"
+                                    style={{
+                                        left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h,
+                                        border: `${1 / workspaceZoom}px solid #5b8cff`,
+                                        background: 'rgba(91,140,255,0.12)',
+                                        zIndex: 9100,
+                                    }}
+                                />
+                            )}
                         </div>
+
+                        {/* Multi-selection toolbar */}
+                        {selectedIds.length > 1 && (
+                            <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-neutral-950/90 backdrop-blur border border-white/10 rounded-full px-3 py-1.5 shadow-xl z-[200]">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[#5b8cff]" />
+                                <span className="text-[8px] font-black text-white uppercase tracking-widest">{selectedIds.length} selected</span>
+                                <div className="h-3 w-px bg-white/10 mx-1" />
+                                <button onClick={duplicateSelected} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Duplicate (Ctrl+D)"><Copy size={10} /></button>
+                                <button onClick={toggleLockSelected} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-all" title="Lock / unlock"><Lock size={10} /></button>
+                                <div className="h-3 w-px bg-white/10 mx-1" />
+                                <button onClick={deleteSelected} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-red-500/10 text-neutral-400 hover:text-red-400 transition-all" title="Delete"><Trash2 size={10} /></button>
+                            </div>
+                        )}
 
                         {/* Shortcuts */}
                         <div className="absolute bottom-10 right-10 flex flex-col items-end gap-2">
                             <div className="flex items-center gap-2 text-[8px] font-black text-neutral-500 uppercase tracking-[0.2em]">
-                                <Move size={10} /> Drag layers to position
+                                <Move size={10} /> Drag to move · Shift-click or drag a box to multi-select
                             </div>
                             <div className="flex items-center gap-2 text-[8px] font-black text-neutral-500 uppercase tracking-[0.2em]">
-                                <RotateCw size={10} /> Rotate in properties
+                                <RotateCw size={10} /> Drag outside a corner to rotate
                             </div>
                             <div className="flex items-center gap-2 text-[8px] font-black text-neutral-500 uppercase tracking-[0.2em]">
                                 <Layers size={10} /> Right-click for options

@@ -10,6 +10,8 @@ import QRCode from 'react-qr-code';
 import { enqueuePhoto, initUploadQueue, newPhotoId, useUploadQueue } from '@/lib/upload-queue';
 import { makeThumbnail } from '@/lib/image-utils';
 import { drawTextElement, loadTextFonts, textElementStyle } from '@/lib/template-text';
+import TemplateTextBody from '@/components/templates/TemplateTextBody';
+import { useTemplateFonts } from '@/lib/fonts';
 import { drawSticker, drawTemplateBackground, overlayStyle, stickerBoxStyle, stickerImageStyle } from '@/lib/template-render';
 
 import {
@@ -89,6 +91,13 @@ function applyFisheyeToCanvas(canvas: HTMLCanvasElement) {
     ctx.putImageData(new ImageData(dst, W, H), 0, 0);
 }
 
+/** Width / height of a template slot as it appears on the finished photo */
+function slotAspect(tpl: any, index: number): number {
+    const slot = tpl?.slots?.[index];
+    if (!slot || !slot.width || !slot.height) return 3 / 2;
+    return (slot.width / 100 * tpl.width) / (slot.height / 100 * tpl.height);
+}
+
 export default function PublicBoothPage() {
     const params = useParams();
     const [event, setEvent] = useState<Event | null>(null);
@@ -99,6 +108,7 @@ export default function PublicBoothPage() {
     // Booth flow state
     const [step, setStep] = useState<BoothStep>('welcome');
     const [selectedTemplate, setSelectedTemplate] = useState<TemplateConfig | null>(null);
+    useTemplateFonts(selectedTemplate?.textElements);
     const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
     const [currentSlotIndex, setCurrentSlotIndex] = useState(0);
     // Sub-state within the 'capture' step: live camera | counting down | previewing just-taken photo
@@ -316,9 +326,7 @@ export default function PublicBoothPage() {
 
         // 1. Calculate the Target Aspect Ratio (from Template Slot Grid)
         // Assuming uniform grid:
-        const rows = selectedTemplate.layout.rows;
-        const cols = selectedTemplate.layout.cols;
-        const targetRatio = rows > cols ? 3 / 2 : 16 / 9;
+        const targetRatio = slotAspect(selectedTemplate, currentSlotIndex);
 
         // 2. Video Source Ratio
         const videoRatio = video.videoWidth / video.videoHeight;
@@ -359,7 +367,7 @@ export default function PublicBoothPage() {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         if (fisheyeEnabled) applyFisheyeToCanvas(canvas);
         return canvas.toDataURL('image/jpeg', 0.95);
-    }, [selectedTemplate, isMirrored, zoom, selectedFilter, fisheyeEnabled]);
+    }, [selectedTemplate, currentSlotIndex, isMirrored, zoom, selectedFilter, fisheyeEnabled]);
 
     // ── Step Handlers ──────────────────────────────────────────────────
 
@@ -509,17 +517,22 @@ export default function PublicBoothPage() {
     // ── Generate Composite + Upload + QR ───────────────────────────────
 
     const handleConfirmAndGenerateQR = async () => {
-        const url = await queueDigitalCopy();
+        const url = downloadUrl ?? await queueDigitalCopy();
         if (url) {
             setDownloadUrl(url);
             setStep('qr');
         }
     };
 
+    /** A printed souvenir always comes with a digital copy, so the guest still gets the QR */
     const handleOpenPrintPicker = async () => {
         setGeneratingPrint(true);
         setShowPrintPicker(true);
-        const compositeDataUrl = await generateComposite();
+        const [digitalUrl, compositeDataUrl] = await Promise.all([
+            downloadUrl ?? queueDigitalCopy({ fallbackDownload: false }),
+            generateComposite(),
+        ]);
+        if (digitalUrl) setDownloadUrl(digitalUrl);
         setPrintCompositeUrl(compositeDataUrl);
         setGeneratingPrint(false);
     };
@@ -531,7 +544,7 @@ export default function PublicBoothPage() {
      * The photo id is generated here, so the QR link is valid immediately —
      * /download/[id] shows a "preparing" state until the queue finishes syncing.
      */
-    const queueDigitalCopy = async () => {
+    const queueDigitalCopy = async ({ fallbackDownload = true }: { fallbackDownload?: boolean } = {}) => {
         if (!selectedTemplate || !event) return null;
         setUploadingComposite(true);
 
@@ -549,7 +562,7 @@ export default function PublicBoothPage() {
             return `${window.location.origin}/download/${id}`;
         } catch (err) {
             console.error('Error queueing digital copy:', err);
-            if (compositeDataUrl) handleFallbackDownload(compositeDataUrl);
+            if (compositeDataUrl && fallbackDownload) handleFallbackDownload(compositeDataUrl);
             return null;
         } finally {
             setUploadingComposite(false);
@@ -1244,7 +1257,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                                 pointerEvents: 'none',
                                             }}
                                         >
-                                            {el.text}
+                                            <TemplateTextBody el={el} len={n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`} />
                                         </div>
                                     );
                                 })}
@@ -1269,11 +1282,11 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     />
                                     
                                     {/* Main Focus Frame */}
-                                    <div className="relative z-10 border-8 border-white/20 rounded-[40px] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.8)] transition-all duration-500 scale-110"
+                                    <div className="relative z-10 border-8 border-white/20 rounded-[40px] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.8)]"
                                         style={{ 
-                                            aspectRatio: `${selectedTemplate.width} / ${selectedTemplate.height}`,
-                                            width: 'min(85vw, 1000px)', 
-                                            maxHeight: '75vh' 
+                                            aspectRatio: slotAspect(selectedTemplate, currentSlotIndex),
+                                            height: 'min(70vh, 800px)',
+                                            maxWidth: '85vw',
                                         }}>
                                         <video
                                             ref={(el) => {
@@ -1283,7 +1296,10 @@ const handleFallbackDownload = (dataUrl: string) => {
                                             }}
                                             autoPlay playsInline muted
                                             className="w-full h-full object-cover"
-                                            style={{ transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})` }}
+                                            style={{
+                                                transform: `${isMirrored ? 'scaleX(-1)' : ''} scale(${zoom})`,
+                                                filter: FILTERS.find(f => f.id === selectedFilter)?.css || 'none',
+                                            }}
                                         />
                                         {/* Vignette & Corner Accents */}
                                         <div className="absolute inset-0 shadow-[inset_0_0_150px_rgba(0,0,0,0.6)]" />
@@ -1651,7 +1667,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                                 pointerEvents: 'none',
                                             }}
                                         >
-                                            {el.text}
+                                            <TemplateTextBody el={el} len={n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`} />
                                         </div>
                                     );
                                 })}
@@ -1729,7 +1745,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                             selectedPhotos={[{ id: 'composite', url: printCompositeUrl }]}
                             allPhotos={[{ id: 'composite', url: printCompositeUrl }]}
                             templates={[]}
-                            onClose={() => setShowPrintPicker(false)}
+                            onClose={() => { setShowPrintPicker(false); if (downloadUrl) setStep('qr'); }}
                             themeColor={tc}
                         />
                     </div>
@@ -1777,6 +1793,13 @@ const handleFallbackDownload = (dataUrl: string) => {
 
                             {/* Actions */}
                             <div className="flex gap-4 justify-center mt-8">
+                                <button
+                                    onClick={handleOpenPrintPicker}
+                                    className="px-8 py-3 rounded-xl text-white font-bold border border-white/20 hover:bg-white/10 transition-all flex items-center gap-2"
+                                >
+                                    <Printer size={18} />
+                                    Print Souvenir
+                                </button>
                                 <button
                                     onClick={() => {
                                         setCapturedPhotos([]);

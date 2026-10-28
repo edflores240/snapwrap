@@ -5,7 +5,7 @@ import { Stage, Layer, Rect, Text, Image as KonvaImage, Group, Ellipse, RegularP
 import { TemplateConfig, ShapeElement } from './TemplateDesigner';
 import useImage from 'use-image';
 import { drawTemplateBackground } from '@/lib/template-render';
-import { TEXT_LINE_HEIGHT, loadTextFonts, measureTextBlock, parseTextShadows } from '@/lib/template-text';
+import { TEXT_LINE_HEIGHT, curveGlyphs, loadTextFonts, measureTextBlock, parseTextShadows } from '@/lib/template-text';
 
 interface TemplateVisualizerProps {
     template: TemplateConfig;
@@ -232,9 +232,43 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                     return null;
                                 } else if (item.type === 'text') {
                                     const txt = item.data;
+                                    const shadow = parseTextShadows(txt.textShadow)[0];
+                                    const curved = txt.curve ? curveGlyphs(txt, scale) : null;
+                                    if (curved) {
+                                        // Curved text: one node per character, placed and tilted along the arc
+                                        const cx = (txt.x / 100) * width;
+                                        const cy = (txt.y / 100) * height;
+                                        const fontPx = txt.fontSize * scale;
+                                        return (
+                                            <Group key={`${txt.id}-${fontsReady}`} x={cx} y={cy} rotation={txt.rotation} opacity={txt.opacity} listening={false}>
+                                                {curved.glyphs.map((g, gi) => (
+                                                    <Text
+                                                        key={gi}
+                                                        text={g.text}
+                                                        x={g.x}
+                                                        y={g.y}
+                                                        rotation={(g.rotation * 180) / Math.PI}
+                                                        offsetX={g.width / 2}
+                                                        offsetY={fontPx * 0.82}
+                                                        fontSize={fontPx}
+                                                        fontFamily={txt.fontFamily}
+                                                        fontStyle={`${txt.fontStyle === 'italic' ? 'italic ' : ''}${txt.fontWeight}`.trim()}
+                                                        lineHeight={1}
+                                                        fill={txt.color}
+                                                        stroke={txt.textStrokeWidth ? txt.textStroke || '#000000' : undefined}
+                                                        strokeWidth={(txt.textStrokeWidth || 0) * scale}
+                                                        shadowColor={shadow?.color}
+                                                        shadowOffsetX={(shadow?.x || 0) * scale}
+                                                        shadowOffsetY={(shadow?.y || 0) * scale}
+                                                        shadowBlur={(shadow?.blur || 0) * scale}
+                                                        shadowEnabled={!!shadow}
+                                                    />
+                                                ))}
+                                            </Group>
+                                        );
+                                    }
                                     // Same box the DOM and canvas renderers use, centred on (x, y) like them
                                     const block = measureTextBlock(txt, scale);
-                                    const shadow = parseTextShadows(txt.textShadow)[0];
                                     return (
                                         <Text
                                             key={`${txt.id}-${fontsReady}`}

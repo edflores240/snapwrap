@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { ensureFonts } from './fonts';
 
 /**
  * Single definition of how a template text element looks, shared by every place that draws one:
@@ -23,6 +24,8 @@ export interface TextLike {
     rotation: number;
     textStroke?: string;
     textStrokeWidth?: number;
+    /** Bend, -100..100: positive arches the text up (like a rainbow), negative dips it down (like a smile) */
+    curve?: number;
 }
 
 export const TEXT_LINE_HEIGHT = 1.2;
@@ -96,6 +99,7 @@ function fontString(el: TextLike, px: number) {
 /** Canvas can only draw a web font that has already been loaded, so make sure of that before drawing. */
 export async function loadTextFonts(elements: TextLike[]) {
     if (typeof document === 'undefined' || !document.fonts) return;
+    ensureFonts(elements.map(el => el.fontFamily));
     await Promise.all(
         elements.map(el => document.fonts.load(fontString(el, 16), el.text).catch(() => undefined)),
     );
@@ -151,6 +155,90 @@ export function measureTextBlock(el: TextLike, s: number) {
     return { width: l.width, height: l.height };
 }
 
+// ── Curved text ────────────────────────────────────────────────────────────
+
+/** Where the middle glyph's baseline sits relative to the element's (x, y), as a fraction of font size. */
+const BASELINE_OFFSET = 0.3;
+
+export interface CurveGeometry {
+    /** Circle radius (px at the scale used) */
+    radius: number;
+    /** Angle the text spans, radians */
+    sweep: number;
+    up: boolean;
+    /** Half the width / height of a box centred on the element's (x, y) that holds the whole curved text */
+    halfWidth: number;
+    halfHeight: number;
+    /** SVG path of the baseline, in the same px and origin as the box (origin = element centre) */
+    path: string;
+    /** Origin of the circle and the baseline y of the middle glyph, same coordinates */
+    centerY: number;
+    baselineY: number;
+}
+
+/** Geometry for text of `width` px bent by `curve` (-100..100); null when the bend is negligible. */
+export function curveGeometry(width: number, fontPx: number, curve: number, margin = 0): CurveGeometry | null {
+    if (!curve || Math.abs(curve) < 1 || width <= 0) return null;
+
+    const sweep = (Math.abs(curve) / 100) * Math.PI;
+    const radius = width / sweep;
+    const half = sweep / 2;
+    const chord = 2 * radius * Math.sin(half);
+    const sagitta = radius * (1 - Math.cos(half));
+    const up = curve > 0;
+    const asc = fontPx * 0.95;
+    const desc = fontPx * 0.3;
+    const base = fontPx * BASELINE_OFFSET; // middle glyph baseline, below the element centre
+
+    // Origin is the element centre; the middle glyph sits on the baseline at y = base
+    const endY = up ? base + sagitta : base - sagitta;
+    const path = `M ${-chord / 2} ${endY} A ${radius} ${radius} 0 ${sweep > Math.PI ? 1 : 0} ${up ? 1 : 0} ${chord / 2} ${endY}`;
+    const centerY = up ? base + radius : base - radius;
+
+    const top = up ? base - asc : base - sagitta - asc;
+    const bottom = up ? base + sagitta + desc : base + desc;
+    const reach = (radius + Math.max(asc, desc)) * Math.sin(Math.min(half, Math.PI / 2));
+
+    return {
+        radius, sweep, up, path, centerY, baselineY: base,
+        halfWidth: reach + fontPx * 0.2 + margin,
+        halfHeight: Math.max(Math.abs(top), Math.abs(bottom)) + margin,
+    };
+}
+
+export interface Glyph { text: string; x: number; y: number; rotation: number; width: number }
+
+/** Each character's position and tilt on the arc, relative to the element centre (px at scale `s`). */
+export function curveGlyphs(el: TextLike, s: number): { glyphs: Glyph[]; geometry: CurveGeometry } | null {
+    const ctx = getMeasureCtx();
+    const px = el.fontSize * s;
+    const spacing = (el.letterSpacing || 0) * s;
+    ctx.font = fontString(el, px);
+    if ('letterSpacing' in ctx) (ctx as SpacedContext).letterSpacing = '0px';
+
+    const chars = [...el.text.replace(/\n/g, ' ')];
+    const widths = chars.map(ch => ctx.measureText(ch).width + spacing);
+    const total = widths.reduce((a, b) => a + b, 0);
+    const geometry = curveGeometry(total, px, el.curve ?? 0);
+    if (!geometry) return null;
+
+    const { radius, up, centerY } = geometry;
+    let cursor = 0;
+    const glyphs = chars.map((ch, i) => {
+        const mid = cursor + (widths[i] - spacing) / 2;
+        cursor += widths[i];
+        const angle = (mid - total / 2) / radius; // 0 at the middle of the text
+        return up
+            ? { text: ch, x: radius * Math.sin(angle), y: centerY - radius * Math.cos(angle), rotation: angle, width: widths[i] - spacing }
+            : { text: ch, x: radius * Math.sin(angle), y: centerY + radius * Math.cos(angle), rotation: -angle, width: widths[i] - spacing };
+    });
+    return { glyphs, geometry };
+}
+
+// ── Drawing ────────────────────────────────────────────────────────────────
+
+interface Op { text: string; x: number; y: number; rotation: number; anchorX: number }
+
 /**
  * Draws a text element centred on (cx, cy) in canvas px, matching the DOM rendering.
  * `s` is canvas px per template px. Effects are drawn on a scratch canvas first so that shadows
@@ -160,12 +248,42 @@ export function drawTextElement(ctx: CanvasRenderingContext2D, el: TextLike, cx:
     if (!el.text) return;
     const shadows = parseTextShadows(el.textShadow);
     const strokeW = (el.textStrokeWidth || 0) * s;
-
-    const layout = layoutText(getMeasureCtx(), el, s);
+    const px = el.fontSize * s;
+    const spacing = (el.letterSpacing || 0) * s;
     const reach = Math.max(0, ...shadows.map(sh => Math.max(Math.abs(sh.x), Math.abs(sh.y)) * s + sh.blur * s * 2));
-    const margin = Math.ceil(reach + strokeW + el.fontSize * s * 0.3);
-    const w = Math.ceil(layout.width + margin * 2);
-    const h = Math.ceil(layout.height + margin * 2);
+    const margin = Math.ceil(reach + strokeW + px * 0.3);
+
+    const curved = curveGlyphs(el, s);
+    let w: number, h: number;
+    const ops: Op[] = [];
+
+    if (curved) {
+        // Origin of the scratch canvas is the element centre
+        w = Math.ceil(curved.geometry.halfWidth * 2 + margin * 2);
+        h = Math.ceil(curved.geometry.halfHeight * 2 + margin * 2);
+        for (const g of curved.glyphs) ops.push({ text: g.text, x: w / 2 + g.x, y: h / 2 + g.y, rotation: g.rotation, anchorX: -g.width / 2 });
+    } else {
+        const layout = layoutText(getMeasureCtx(), el, s);
+        w = Math.ceil(layout.width + margin * 2);
+        h = Math.ceil(layout.height + margin * 2);
+        const align = el.textAlign === 'right' ? 1 : el.textAlign === 'left' || el.textAlign === 'start' ? 0 : 0.5;
+        layout.lines.forEach((line, i) => {
+            const x = margin + (layout.width - line.width) * align;
+            const y = margin + i * layout.lineHeight + layout.ascent;
+            if (spacing && !('letterSpacing' in getMeasureCtx())) {
+                // Browsers without canvas letter-spacing: place each character by hand
+                let cursor = x;
+                const m = getMeasureCtx();
+                m.font = fontString(el, px);
+                for (const ch of line.text) {
+                    ops.push({ text: ch, x: cursor, y, rotation: 0, anchorX: 0 });
+                    cursor += m.measureText(ch).width + spacing;
+                }
+            } else {
+                ops.push({ text: line.text, x, y, rotation: 0, anchorX: 0 });
+            }
+        });
+    }
 
     const off = document.createElement('canvas');
     off.width = w;
@@ -173,31 +291,22 @@ export function drawTextElement(ctx: CanvasRenderingContext2D, el: TextLike, cx:
     const o = off.getContext('2d');
     if (!o) return;
 
-    const px = el.fontSize * s;
-    const spacing = (el.letterSpacing || 0) * s;
     o.font = fontString(el, px);
     o.textAlign = 'left';
     o.textBaseline = 'alphabetic';
     o.lineJoin = 'round';
+    // Curved text positions glyphs one by one, so its spacing is already baked into the positions
     const nativeSpacing: boolean = 'letterSpacing' in o;
-    if (nativeSpacing) (o as SpacedContext).letterSpacing = `${spacing}px`;
-
-    const align = el.textAlign === 'right' ? 1 : el.textAlign === 'left' || el.textAlign === 'start' ? 0 : 0.5;
+    if (nativeSpacing) (o as SpacedContext).letterSpacing = curved ? '0px' : `${spacing}px`;
 
     const paint = (draw: (text: string, x: number, y: number) => void) => {
-        layout.lines.forEach((line, i) => {
-            const x = margin + (layout.width - line.width) * align;
-            const y = margin + i * layout.lineHeight + layout.ascent;
-            if (nativeSpacing || !spacing) {
-                draw(line.text, x, y);
-            } else {
-                let cursor = x;
-                for (const ch of line.text) {
-                    draw(ch, cursor, y);
-                    cursor += o.measureText(ch).width + spacing;
-                }
-            }
-        });
+        for (const op of ops) {
+            o.save();
+            o.translate(op.x, op.y);
+            o.rotate(op.rotation);
+            draw(op.text, op.anchorX, 0);
+            o.restore();
+        }
     };
 
     // CSS paints the first shadow on top, so draw them back to front
