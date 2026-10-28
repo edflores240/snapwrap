@@ -105,3 +105,29 @@ select:focus {
   outline: 2px solid var(--color-primary-start);
   outline-offset: 2px;
 }
+/* ── Public gallery ambient motion ─────────────────────────────────────── */
+@keyframes gal-drift { to { background-position: 160px 160px; } }
+@keyframes gal-rise {
+  0%   { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 0; }
+  10%  { opacity: var(--o); }
+  90%  { opacity: var(--o); }
+  100% { transform: translate3d(var(--sway), -115vh, 0) rotate(var(--spin)); opacity: 0; }
+}
+@keyframes gal-fall {
+  0%   { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 0; }
+  10%  { opacity: var(--o); }
+  90%  { opacity: var(--o); }
+  100% { transform: translate3d(var(--sway), 115vh, 0) rotate(var(--spin)); opacity: 0; }
+}
+@keyframes gal-twinkle {
+  0%, 100% { transform: scale(0.4) rotate(0deg); opacity: 0; }
+  50%      { transform: scale(1) rotate(45deg); opacity: var(--o); }
+}
+@keyframes gal-blob {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(8vw, -6vh) scale(1.25); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gal-motion { animation: none !important; opacity: 0 !important; }
+  .gal-drift  { animation: none !important; }
+}

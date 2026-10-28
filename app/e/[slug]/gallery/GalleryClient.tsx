@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, type CSSProperties } from 'react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { 
@@ -15,8 +15,11 @@ import {
     Montserrat,
     Outfit
 } from 'next/font/google';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, MotionConfig, type TargetAndTransition } from 'framer-motion';
+import AmbientMotion from '@/components/gallery/AmbientMotion';
+import { entranceProps, hoverProps, patternStyle } from '@/lib/gallery-effects';
 import { resolveGalleryColors } from '@/lib/gallery-themes';
+import { CAROUSEL_MAX_PHOTOS as MAX_GALLERY_PHOTOS, CAROUSEL_PHOTO_COLUMNS as GALLERY_COLUMNS } from '@/lib/gallery-queries';
 import { 
     RefreshCw, 
     Download, 
@@ -39,6 +42,30 @@ const syne = Syne({ subsets: ['latin'] });
 const bebas = Bebas_Neue({ weight: '400', subsets: ['latin'] });
 const montserrat = Montserrat({ subsets: ['latin'] });
 const outfit = Outfit({ subsets: ['latin'] });
+
+const HEADING_FONTS: Record<string, string> = {
+    playfair: playfair.className,
+    inter: inter.className,
+    anton: anton.className,
+    bodoni: bodoni.className,
+    space: space.className,
+    caveat: caveat.className,
+};
+
+const CORNERS: Record<string, number> = { sharp: 0, soft: 14, round: 36 };
+const SPACING: Record<string, number> = { tight: 8, loose: 56 };
+const PHOTO_MIN_WIDTH: Record<string, number> = { small: 200, medium: 300, large: 440 };
+const CAROUSEL_HEIGHT_VH: Record<string, number> = { small: 38, medium: 52, large: 72 };
+const SCROLL_PX_PER_FRAME: Record<string, number> = { slow: 0.4, normal: 1, fast: 2.2 };
+
+/** Only http(s), mailto and tel links are allowed; anything else (e.g. javascript:) is dropped. */
+function safeLink(raw: string | undefined): string | null {
+    const url = (raw || '').trim();
+    if (!url) return null;
+    if (/^(https?:|mailto:|tel:)/i.test(url)) return url;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return null;
+    return `https://${url}`;
+}
 
 // Utility to determine if text should be black or white based on background hex
 function getContrastColor(hexcolor: string) {
@@ -67,8 +94,6 @@ export interface Photo {
     is_published: boolean;
 }
 
-export const MAX_GALLERY_PHOTOS = 60;
-export const GALLERY_COLUMNS = 'id, image_url, thumb_url, created_at, is_published';
 
 const THEMES = {
     modern: {
@@ -185,6 +210,7 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
     const [event, setEvent] = useState<Event | null>(initialEvent);
     const [photos, setPhotos] = useState<Photo[]>(initialPhotos);
     const [loading, setLoading] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
 
     // Admin live preview: the event config editor posts unsaved settings into this page
     const [previewSettings, setPreviewSettings] = useState<Record<string, any> | null>(null);
@@ -231,6 +257,7 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
             console.error('Error loading gallery:', error);
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     };
 
@@ -261,6 +288,8 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
         ? [...photos, ...photos, ...photos, ...photos, ...photos, ...photos]
         : [];
 
+    const scrollSpeed = SCROLL_PX_PER_FRAME[(previewSettings ?? event?.config?.publicPage ?? {}).scrollSpeed] ?? 1;
+
     // Robust Auto-Scroll Logic without Time Delta
     useEffect(() => {
         const el = scrollRef.current;
@@ -268,17 +297,21 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
 
         let animationFrameId: number;
         let running = true;
+        // scrollLeft is rounded by the browser, so keep the fractional position ourselves for slow speeds
+        let position = el.scrollLeft;
 
         const scroll = () => {
             if (!running) return;
 
             if (!isHovered) {
-                el.scrollLeft += 1; // Faster, simple increment
+                position += scrollSpeed;
+                el.scrollLeft = position;
 
                 // Seamless Loop:
                 // We reset when we reach approximately half the scroll width.
                 // Since we have 6 sets, resetting at 1/2 way means valid content exists at 0.
-                if (el.scrollLeft >= (el.scrollWidth / 2)) {
+                if (position >= (el.scrollWidth / 2)) {
+                    position = 0;
                     el.scrollLeft = 0;
                 }
             }
@@ -290,7 +323,7 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
             running = false;
             cancelAnimationFrame(animationFrameId);
         };
-    }, [isHovered, displayPhotos.length]); // Depend on length to restart if photos load
+    }, [isHovered, displayPhotos.length, scrollSpeed]); // Depend on length to restart if photos load
 
     if (loading) {
         return (
@@ -312,9 +345,33 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
 
     const layoutType = pp.layoutType || 'carousel';
 
+    // Display options (all optional; "theme" keeps the theme's own look)
+    const headingClass = HEADING_FONTS[pp.headingFont] ?? currentTheme.fontTitle;
+    const alignLeft = pp.textAlign === 'left';
+    const showDate = pp.showDate !== false;
+    const showNote = pp.showNote !== false;
+    const showRefresh = pp.showRefresh !== false;
+    const gap = SPACING[pp.spacing];
+    const minPhotoWidth = PHOTO_MIN_WIDTH[pp.photoSize];
+    const ctaHref = pp.ctaLabel ? safeLink(pp.ctaUrl) : null;
+
+    const pattern = patternStyle(pp.bgPattern, primaryColor, pp.patternStrength);
+    const hover = hoverProps(pp.hover);
+    const zoomOnHover = !pp.hover || pp.hover === 'theme' || pp.hover === 'zoom';
+    const cardMotion = (i: number, stagger: number, fallback: { initial: TargetAndTransition; animate: TargetAndTransition }) => ({
+        ...(entranceProps(pp.entrance, i, stagger) ?? { ...fallback, transition: { delay: (i % stagger) * 0.05 } }),
+        ...(hover ?? {}),
+    });
+
+    const cardStyle: CSSProperties = {};
+    if (pp.corners in CORNERS) cardStyle.borderRadius = CORNERS[pp.corners];
+    if (pp.frame === 'none') { cardStyle.border = '0'; cardStyle.boxShadow = 'none'; }
+    else if (pp.frame === 'thin') { cardStyle.border = `2px solid ${primaryColor}33`; }
+    else if (pp.frame === 'thick') { cardStyle.border = '10px solid #ffffff'; cardStyle.boxShadow = '0 18px 40px -12px rgba(0,0,0,0.35)'; }
+
     const renderHeader = (isSidebar = false) => (
-        <header className={`${isSidebar ? 'text-left space-y-8' : 'relative z-10 pt-16 pb-0 px-6 text-center max-w-5xl mx-auto w-full'}`}>
-            {!isSidebar && (
+        <header className={`${isSidebar ? 'text-left space-y-8' : `relative z-10 pt-16 pb-0 px-6 ${alignLeft ? 'text-left' : 'text-center'} max-w-5xl mx-auto w-full`}`}>
+            {!isSidebar && showNote && (
                 <div className={`absolute top-4 left-4 md:top-10 md:left-[10%] rotate-[-10deg] opacity-80 pointer-events-none`} style={{ color: primaryColor }}>
                     <span className={`${caveat.className} text-xl md:text-2xl`}>
                         {pp.handwrittenNote || "All yours!"}
@@ -323,27 +380,29 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                 </div>
             )}
             
-            <div 
-                className={`inline-block px-4 py-1 rounded-full text-xs md:text-sm font-medium mb-4 transform -rotate-1 shadow-sm`}
-                style={{ backgroundColor: primaryColor, color: getContrastColor(primaryColor) }}
-            >
-                {new Date(event.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-            </div>
-            
-            <div className={`${isSidebar ? 'text-left' : 'text-center'} mb-4`}>
+            {showDate && (
+                <div
+                    className={`inline-block px-4 py-1 rounded-full text-xs md:text-sm font-medium mb-4 transform -rotate-1 shadow-sm`}
+                    style={{ backgroundColor: primaryColor, color: getContrastColor(primaryColor) }}
+                >
+                    {new Date(event.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                </div>
+            )}
+
+            <div className={`${isSidebar || alignLeft ? 'text-left' : 'text-center'} mb-4`}>
                 <h1
-                    className={`font-black tracking-tighter leading-[0.95] max-w-full break-words ${currentTheme.fontTitle} ${(currentTheme as any).titleStyle || ''}`}
+                    className={`font-black tracking-tighter leading-[0.95] max-w-full break-words ${headingClass} ${(currentTheme as any).titleStyle || ''}`}
                     style={{ fontSize: headlineFontSize(pp.title || event.name, currentTheme as { titleMax?: number; titleEm?: number }, isSidebar), overflowWrap: 'anywhere' }}
                 >
                     {pp.title || event.name}
                 </h1>
             </div>
             
-            <p className={`text-base md:text-xl opacity-70 ${isSidebar ? 'text-left' : 'text-center max-w-2xl mx-auto'} leading-relaxed ${currentTheme.fontBody}`}>
+            <p className={`text-base md:text-xl opacity-70 ${isSidebar || alignLeft ? 'text-left max-w-2xl' : 'text-center max-w-2xl mx-auto'} leading-relaxed ${currentTheme.fontBody}`}>
                 {pp.subtitle || "Capturing moments, creating memories."}
             </p>
 
-            {isSidebar && (
+            {isSidebar && showNote && (
                 <div className="opacity-80 pt-10" style={{ color: primaryColor }}>
                     <span className={`${caveat.className} text-2xl md:text-3xl`}>
                         {pp.handwrittenNote || "All yours!"}
@@ -351,23 +410,41 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                 </div>
             )}
 
-            <div className={`mt-8 flex ${isSidebar ? 'justify-start' : 'justify-center'}`}>
-                <button 
-                    onClick={() => {
-                        setLoading(true);
-                        fetchEventAndPhotos();
-                    }}
-                    className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold uppercase tracking-widest transition-all hover:scale-105 active:scale-95 shadow-xl`}
-                    style={{ backgroundColor: primaryColor, color: getContrastColor(primaryColor) }}
-                >
-                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-                    Refresh Gallery
-                </button>
-            </div>
+            {(showRefresh || ctaHref) && (
+                <div className={`mt-8 flex flex-wrap gap-3 ${isSidebar || alignLeft ? 'justify-start' : 'justify-center'}`}>
+                    {ctaHref && (
+                        <a
+                            href={ctaHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold uppercase tracking-widest transition-all hover:scale-105 active:scale-95 shadow-xl"
+                            style={{ backgroundColor: primaryColor, color: getContrastColor(primaryColor) }}
+                        >
+                            {pp.ctaLabel}
+                        </a>
+                    )}
+                    {showRefresh && (
+                        <button
+                            onClick={() => {
+                                setRefreshing(true);
+                                fetchEventAndPhotos();
+                            }}
+                            className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
+                            style={ctaHref
+                                ? { border: `2px solid ${primaryColor}`, color: primaryColor }
+                                : { backgroundColor: primaryColor, color: getContrastColor(primaryColor), boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)' }}
+                        >
+                            <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                            Refresh Gallery
+                        </button>
+                    )}
+                </div>
+            )}
         </header>
     );
 
     return (
+        <MotionConfig reducedMotion="user">
         <main 
             className="min-h-screen relative overflow-x-hidden flex flex-col transition-colors duration-500"
             style={{ 
@@ -378,9 +455,20 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                 '--primary-glow': `${primaryColor}44` 
             } as any}
         >
+            {pattern && (
+                <div
+                    className={`absolute inset-0 pointer-events-none ${pp.bgMotion === 'drift' ? 'gal-drift' : ''}`}
+                    style={{ ...pattern, zIndex: 0, ...(pp.bgMotion === 'drift' ? { animation: 'gal-drift 18s linear infinite' } : {}) }}
+                    aria-hidden
+                />
+            )}
+            {pp.bgMotion && pp.bgMotion !== 'none' && pp.bgMotion !== 'drift' && (
+                <AmbientMotion kind={pp.bgMotion} primary={primaryColor} secondary={secondaryColor} />
+            )}
+
             {layoutType !== 'sidebar' && renderHeader()}
 
-            <div className={`flex-1 flex flex-col ${layoutType === 'sidebar' ? 'md:flex-row' : ''} min-h-[60vh]`}>
+            <div className={`relative z-[1] flex-1 flex flex-col ${layoutType === 'sidebar' ? 'md:flex-row' : ''} min-h-[60vh]`}>
                 
                 {layoutType === 'sidebar' && (
                     <div className="w-full md:w-[400px] lg:w-[500px] p-8 md:p-16 md:sticky md:top-0 h-fit">
@@ -399,20 +487,20 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                             onMouseEnter={() => setIsHovered(true)}
                             onMouseLeave={() => setIsHovered(false)}
                             className="flex gap-4 md:gap-10 overflow-x-hidden py-10 px-6 cursor-grab active:cursor-grabbing select-none items-center"
+                            style={gap !== undefined ? { gap } : undefined}
                         >
                             {displayPhotos.map((photo, i) => (
                                 <motion.div
                                     key={`${photo.id}-${i}`}
                                     onClick={() => setFullscreenIndex(i % photos.length)}
                                     className={`flex-shrink-0 relative aspect-[3/4] h-[50vh] md:h-[65vh] overflow-hidden group cursor-pointer ${currentTheme.card}`}
-                                    initial={{ opacity: 0, y: 30 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: (i % 10) * 0.05 }}
+                                    style={{ ...cardStyle, ...(CAROUSEL_HEIGHT_VH[pp.photoSize] ? { height: `${CAROUSEL_HEIGHT_VH[pp.photoSize]}vh` } : {}) }}
+                                    {...cardMotion(i, 10, { initial: { opacity: 0, y: 30 }, animate: { opacity: 1, y: 0 } })}
                                 >
                                     <img
                                         src={photo.final_url || photo.thumb_url || photo.image_url}
                                         alt="Gallery Photo"
-                                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                                        className={`w-full h-full object-cover transition-transform duration-700 ${zoomOnHover ? 'group-hover:scale-110' : ''}`}
                                         loading="lazy"
                                     />
                                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center gap-4">
@@ -427,20 +515,22 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                             ))}
                         </div>
                     ) : layoutType === 'mosaic' ? (
-                        <div className="columns-2 md:columns-3 lg:columns-4 gap-6 space-y-6 max-w-7xl mx-auto px-6 py-10">
+                        <div
+                            className={`${minPhotoWidth ? '' : 'columns-2 md:columns-3 lg:columns-4 '}gap-6 max-w-7xl mx-auto px-6 py-10`}
+                            style={{ ...(minPhotoWidth ? { columnWidth: minPhotoWidth } : {}), ...(gap !== undefined ? { columnGap: gap } : {}) }}
+                        >
                             {photos.map((photo, i) => (
                                 <motion.div
                                     key={photo.id}
                                     onClick={() => setFullscreenIndex(i)}
                                     className={`relative break-inside-avoid overflow-hidden group cursor-pointer ${currentTheme.card}`}
-                                    initial={{ opacity: 0, scale: 0.95 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    transition={{ delay: (i % 20) * 0.05 }}
+                                    style={{ ...cardStyle, marginBottom: gap ?? 24 }}
+                                    {...cardMotion(i, 20, { initial: { opacity: 0, scale: 0.95 }, animate: { opacity: 1, scale: 1 } })}
                                 >
                                     <img
                                         src={photo.final_url || photo.thumb_url || photo.image_url}
                                         alt="Gallery Photo"
-                                        className="w-full object-cover transition-all duration-700 group-hover:scale-105"
+                                        className={`w-full object-cover transition-all duration-700 ${zoomOnHover ? 'group-hover:scale-105' : ''}`}
                                     />
                                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-between p-6">
                                         <Sparkles className="text-white" size={16} />
@@ -449,20 +539,25 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                             ))}
                         </div>
                     ) : (
-                        <div className={`grid grid-cols-1 md:grid-cols-2 ${layoutType === 'sidebar' ? 'lg:grid-cols-2' : 'lg:grid-cols-3'} gap-8 max-w-7xl mx-auto px-6 py-10 w-full`}>
+                        <div
+                            className={`grid ${minPhotoWidth ? '' : `grid-cols-1 md:grid-cols-2 ${layoutType === 'sidebar' ? 'lg:grid-cols-2' : 'lg:grid-cols-3'}`} gap-8 max-w-7xl mx-auto px-6 py-10 w-full`}
+                            style={{
+                                ...(minPhotoWidth ? { gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${minPhotoWidth}px), 1fr))` } : {}),
+                                ...(gap !== undefined ? { gap } : {}),
+                            }}
+                        >
                             {photos.map((photo, i) => (
                                 <motion.div
                                     key={photo.id}
                                     onClick={() => setFullscreenIndex(i)}
-                                    className={`relative aspect-square overflow-hidden group cursor-pointer ${currentTheme.card} ${i % 3 === 1 ? 'md:mt-12' : ''}`}
-                                    initial={{ opacity: 0, y: 20 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: (i % 20) * 0.05 }}
+                                    className={`relative aspect-square overflow-hidden group cursor-pointer ${currentTheme.card} ${i % 3 === 1 && !minPhotoWidth ? 'md:mt-12' : ''}`}
+                                    style={cardStyle}
+                                    {...cardMotion(i, 20, { initial: { opacity: 0, y: 20 }, animate: { opacity: 1, y: 0 } })}
                                 >
                                     <img
                                         src={photo.final_url || photo.thumb_url || photo.image_url}
                                         alt="Gallery Photo"
-                                        className="w-full h-full object-cover transition-all duration-700 group-hover:scale-110"
+                                        className={`w-full h-full object-cover transition-all duration-700 ${zoomOnHover ? 'group-hover:scale-110' : ''}`}
                                     />
                                     <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
                                         <div className="bg-white/20 backdrop-blur-md p-4 rounded-full">
@@ -559,5 +654,6 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                 Powered by SnapWrap
             </footer>
         </main>
+        </MotionConfig>
     );
 }

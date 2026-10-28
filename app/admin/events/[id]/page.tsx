@@ -40,6 +40,8 @@ import {
 import TemplateDesigner, { TemplateConfig } from '@/components/templates/TemplateDesigner';
 import PrintDesigner from '@/components/PrintDesigner';
 import GalleryPreview from '@/components/admin/GalleryPreview';
+import Segmented from '@/components/admin/Segmented';
+import { MOTION_OPTIONS, PATTERN_OPTIONS } from '@/lib/gallery-effects';
 import { GALLERY_THEME_KEYS, THEME_PALETTES, resolveGalleryColors } from '@/lib/gallery-themes';
 
 interface Event {
@@ -196,8 +198,27 @@ export default function EventDetailPage() {
         subtitle: '',
         handwrittenNote: 'All yours!',
         primaryColor: THEME_PALETTES.modern.primary,
-        secondaryColor: THEME_PALETTES.modern.secondary
+        secondaryColor: THEME_PALETTES.modern.secondary,
+        // Display options: 'theme' / unset keeps the theme's own look
+        headingFont: 'theme',
+        textAlign: 'center',
+        photoSize: 'theme',
+        spacing: 'normal',
+        corners: 'theme',
+        frame: 'theme',
+        scrollSpeed: 'normal',
+        bgPattern: 'none',
+        patternStrength: 'subtle',
+        bgMotion: 'none',
+        entrance: 'theme',
+        hover: 'theme',
+        showDate: true,
+        showNote: true,
+        showRefresh: true,
+        ctaLabel: '',
+        ctaUrl: '',
     });
+    const setGallery = (patch: Partial<typeof gallerySettings>) => setGallerySettings(prev => ({ ...prev, ...patch }));
 
     // Template CRUD state
     const [templates, setTemplates] = useState<TemplateConfig[]>([]);
@@ -990,6 +1011,111 @@ export default function EventDetailPage() {
                                         </div>
                                     </div>
  
+                                    <div className="space-y-8 pt-8 border-t border-[#ECE8DF]">
+                                        <p className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Fine-Tuning</p>
+
+                                        <Segmented label="Headline Font" value={gallerySettings.headingFont}
+                                            onChange={(v) => setGallery({ headingFont: v })}
+                                            options={[
+                                                { value: 'theme', label: 'Theme' }, { value: 'playfair', label: 'Playfair' }, { value: 'inter', label: 'Clean' },
+                                                { value: 'anton', label: 'Bold' }, { value: 'bodoni', label: 'Fashion' }, { value: 'caveat', label: 'Script' },
+                                            ]} />
+
+                                        <Segmented label="Header Alignment" value={gallerySettings.textAlign}
+                                            onChange={(v) => setGallery({ textAlign: v })}
+                                            options={[{ value: 'center', label: 'Center' }, { value: 'left', label: 'Left' }]} />
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                                            <Segmented label="Photo Size" value={gallerySettings.photoSize}
+                                                onChange={(v) => setGallery({ photoSize: v })}
+                                                options={[{ value: 'theme', label: 'Auto' }, { value: 'small', label: 'S' }, { value: 'medium', label: 'M' }, { value: 'large', label: 'L' }]} />
+                                            <Segmented label="Spacing" value={gallerySettings.spacing}
+                                                onChange={(v) => setGallery({ spacing: v })}
+                                                options={[{ value: 'tight', label: 'Tight' }, { value: 'normal', label: 'Normal' }, { value: 'loose', label: 'Loose' }]} />
+                                            <Segmented label="Corners" value={gallerySettings.corners}
+                                                onChange={(v) => setGallery({ corners: v })}
+                                                options={[{ value: 'theme', label: 'Theme' }, { value: 'sharp', label: 'Sharp' }, { value: 'soft', label: 'Soft' }, { value: 'round', label: 'Round' }]} />
+                                            <Segmented label="Photo Frame" value={gallerySettings.frame}
+                                                onChange={(v) => setGallery({ frame: v })}
+                                                options={[{ value: 'theme', label: 'Theme' }, { value: 'none', label: 'None' }, { value: 'thin', label: 'Thin' }, { value: 'thick', label: 'Polaroid' }]} />
+                                        </div>
+
+                                        {gallerySettings.layoutType === 'carousel' && (
+                                            <Segmented label="Carousel Speed" value={gallerySettings.scrollSpeed}
+                                                onChange={(v) => setGallery({ scrollSpeed: v })}
+                                                options={[{ value: 'slow', label: 'Slow' }, { value: 'normal', label: 'Normal' }, { value: 'fast', label: 'Fast' }]} />
+                                        )}
+
+                                        <div className="space-y-6 pt-6 border-t border-[#ECE8DF]">
+                                            <p className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Patterns &amp; Animation</p>
+
+                                            <Segmented label="Background Pattern" value={gallerySettings.bgPattern}
+                                                onChange={(v) => setGallery({ bgPattern: v })}
+                                                options={PATTERN_OPTIONS.map(o => ({ value: o.value, label: o.label }))} />
+
+                                            {gallerySettings.bgPattern !== 'none' && (
+                                                <Segmented label="Pattern Strength" value={gallerySettings.patternStrength}
+                                                    onChange={(v) => setGallery({ patternStrength: v })}
+                                                    options={[{ value: 'subtle', label: 'Subtle' }, { value: 'medium', label: 'Medium' }, { value: 'bold', label: 'Bold' }]} />
+                                            )}
+
+                                            <Segmented label="Background Motion" value={gallerySettings.bgMotion}
+                                                onChange={(v) => setGallery({ bgMotion: v })}
+                                                options={MOTION_OPTIONS.map(o => ({ value: o.value, label: o.label }))} />
+                                            {gallerySettings.bgMotion === 'drift' && gallerySettings.bgPattern === 'none' && (
+                                                <p className="text-[9px] font-bold text-amber-600 uppercase tracking-widest">Drift moves the pattern — pick a pattern above</p>
+                                            )}
+
+                                            <Segmented label="Photo Entrance" value={gallerySettings.entrance}
+                                                onChange={(v) => setGallery({ entrance: v })}
+                                                options={[
+                                                    { value: 'theme', label: 'Theme' }, { value: 'fade', label: 'Fade' }, { value: 'rise', label: 'Rise' },
+                                                    { value: 'pop', label: 'Pop' }, { value: 'slide', label: 'Slide' }, { value: 'flip', label: 'Flip' }, { value: 'none', label: 'None' },
+                                                ]} />
+
+                                            <Segmented label="Hover Effect" value={gallerySettings.hover}
+                                                onChange={(v) => setGallery({ hover: v })}
+                                                options={[{ value: 'theme', label: 'Zoom' }, { value: 'lift', label: 'Lift' }, { value: 'tilt', label: 'Tilt' }, { value: 'none', label: 'None' }]} />
+                                        </div>
+
+                                        <div className="space-y-3">
+                                            <label className="text-[8px] font-bold text-neutral-400 uppercase tracking-widest">Show on page</label>
+                                            <div className="flex flex-wrap gap-3">
+                                                {([['showDate', 'Event date'], ['showNote', 'Handwritten note'], ['showRefresh', 'Refresh button']] as const).map(([key, label]) => (
+                                                    <label key={key} className="flex items-center gap-2 px-4 py-3 bg-[#FAF8F5] border border-[#ECE8DF] rounded-xl cursor-pointer text-[10px] font-black uppercase tracking-widest text-[#2A2724]">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={gallerySettings[key]}
+                                                            onChange={(e) => setGallery({ [key]: e.target.checked })}
+                                                            className="accent-[#2A2724]"
+                                                        />
+                                                        {label}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-3">
+                                            <label className="text-[8px] font-bold text-neutral-400 uppercase tracking-widest">Call-to-action button (optional)</label>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                <input
+                                                    type="text"
+                                                    value={gallerySettings.ctaLabel}
+                                                    onChange={(e) => setGallery({ ctaLabel: e.target.value })}
+                                                    className="w-full bg-[#FAF8F5] border border-[#ECE8DF] rounded-lg px-5 py-4 text-sm focus:outline-none focus:border-[#2A2724] transition-all font-medium text-[#2A2724]"
+                                                    placeholder="Book us for your event"
+                                                />
+                                                <input
+                                                    type="text"
+                                                    value={gallerySettings.ctaUrl}
+                                                    onChange={(e) => setGallery({ ctaUrl: e.target.value })}
+                                                    className="w-full bg-[#FAF8F5] border border-[#ECE8DF] rounded-lg px-5 py-4 text-sm focus:outline-none focus:border-[#2A2724] transition-all font-medium text-[#2A2724]"
+                                                    placeholder="yourwebsite.com or mailto:you@email.com"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     <div className="pt-10 border-t border-[#ECE8DF] flex justify-end">
                                         <Button 
                                             variant="ghost"
