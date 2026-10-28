@@ -39,6 +39,8 @@ import {
 } from 'lucide-react';
 import TemplateDesigner, { TemplateConfig } from '@/components/templates/TemplateDesigner';
 import PrintDesigner from '@/components/PrintDesigner';
+import GalleryPreview from '@/components/admin/GalleryPreview';
+import { GALLERY_THEME_KEYS, THEME_PALETTES, resolveGalleryColors } from '@/lib/gallery-themes';
 
 interface Event {
     id: string;
@@ -193,8 +195,8 @@ export default function EventDetailPage() {
         title: '',
         subtitle: '',
         handwrittenNote: 'All yours!',
-        primaryColor: '#000000',
-        secondaryColor: '#ffffff'
+        primaryColor: THEME_PALETTES.modern.primary,
+        secondaryColor: THEME_PALETTES.modern.secondary
     });
 
     // Template CRUD state
@@ -260,7 +262,12 @@ export default function EventDetailPage() {
             setPhotoCount(count ?? 0);
             if (data.config?.templates) setTemplates(data.config.templates);
             if (data.config?.boothSettings) setBoothSettings(prev => ({ ...prev, ...data.config.boothSettings }));
-            if (data.config?.publicPage) setGallerySettings(prev => ({ ...prev, ...data.config.publicPage }));
+            if (data.config?.publicPage) {
+                const saved = { ...data.config.publicPage };
+                // Old events stored black/white as a placeholder; show the colours the page really renders
+                const colors = resolveGalleryColors(saved.themeStyle || 'modern', saved.primaryColor, saved.secondaryColor);
+                setGallerySettings(prev => ({ ...prev, ...saved, primaryColor: colors.primary, secondaryColor: colors.secondary }));
+            }
 
         } catch (error) {
             console.error('Error fetching event:', error);
@@ -841,9 +848,9 @@ export default function EventDetailPage() {
                             initial={{ opacity: 0, x: 20 }}
                             animate={{ opacity: 1, x: 0 }}
                             exit={{ opacity: 0, x: -20 }}
-                            className="max-w-2xl mx-auto"
+                            className="grid grid-cols-1 xl:grid-cols-[minmax(0,540px)_minmax(0,1fr)] gap-8 items-start"
                         >
-                            <Card className="p-12 border-[#ECE8DF] bg-white space-y-12 shadow-sm">
+                            <Card className="p-8 md:p-10 border-[#ECE8DF] bg-white space-y-10 shadow-sm">
                                 <div className="space-y-2">
                                     <h3 className={`text-xl font-black text-[#2A2724] uppercase tracking-tight ${playfair.className}`}>Gallery Aesthetic Protocol</h3>
                                     <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Customize the official guest-facing archive</p>
@@ -854,10 +861,21 @@ export default function EventDetailPage() {
                                         <div className="space-y-3">
                                             <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Visual Theme</label>
                                             <div className="grid grid-cols-2 gap-4">
-                                                {['modern', 'valentine', 'minimal', 'dark', 'retro', 'editorial', 'neon', 'organic', 'serenity', 'industrial', 'vibrant'].map(t => (
+                                                {GALLERY_THEME_KEYS.map(t => (
                                                     <button 
                                                         key={t}
-                                                        onClick={() => setGallerySettings({ ...gallerySettings, themeStyle: t })}
+                                                        onClick={() => {
+                                                            // Carry the new theme's palette over unless the colours were customised
+                                                            const prev = THEME_PALETTES[gallerySettings.themeStyle];
+                                                            const customised = !prev
+                                                                || prev.primary.toLowerCase() !== gallerySettings.primaryColor.toLowerCase()
+                                                                || prev.secondary.toLowerCase() !== gallerySettings.secondaryColor.toLowerCase();
+                                                            setGallerySettings({
+                                                                ...gallerySettings,
+                                                                themeStyle: t,
+                                                                ...(customised ? {} : { primaryColor: THEME_PALETTES[t].primary, secondaryColor: THEME_PALETTES[t].secondary }),
+                                                            });
+                                                        }}
                                                         className={`p-4 rounded-xl border-2 transition-all text-left group ${
                                                             gallerySettings.themeStyle === t 
                                                             ? 'border-[#2A2724] bg-[#2A2724] text-white shadow-sm scale-[1.02]' 
@@ -897,10 +915,23 @@ export default function EventDetailPage() {
                                         </div>
 
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Color Strategy</label>
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Color Strategy</label>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setGallerySettings({
+                                                        ...gallerySettings,
+                                                        primaryColor: THEME_PALETTES[gallerySettings.themeStyle].primary,
+                                                        secondaryColor: THEME_PALETTES[gallerySettings.themeStyle].secondary,
+                                                    })}
+                                                    className="text-[8px] font-bold text-neutral-400 hover:text-[#2A2724] uppercase tracking-widest transition-colors"
+                                                >
+                                                    Reset to theme
+                                                </button>
+                                            </div>
                                             <div className="grid grid-cols-2 gap-4 p-4 bg-[#FAF8F5] rounded-xl border border-[#ECE8DF]">
                                                 <div className="space-y-2">
-                                                    <label className="text-[8px] font-bold text-neutral-400 uppercase">Primary Color</label>
+                                                    <label className="text-[8px] font-bold text-neutral-400 uppercase">Primary · text &amp; accents</label>
                                                     <div className="flex items-center gap-3">
                                                         <input
                                                             type="color"
@@ -912,7 +943,7 @@ export default function EventDetailPage() {
                                                     </div>
                                                 </div>
                                                 <div className="space-y-2">
-                                                    <label className="text-[8px] font-bold text-neutral-400 uppercase">Secondary Color</label>
+                                                    <label className="text-[8px] font-bold text-neutral-400 uppercase">Secondary · background</label>
                                                     <div className="flex items-center gap-3">
                                                         <input
                                                             type="color"
@@ -976,6 +1007,7 @@ export default function EventDetailPage() {
                                     </div>
                                 </div>
                             </Card>
+                            <GalleryPreview slug={event.slug} settings={gallerySettings} />
                         </motion.div>
                     )}
                     {activeTab === 'templates' && (

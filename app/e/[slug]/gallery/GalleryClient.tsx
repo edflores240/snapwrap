@@ -16,6 +16,7 @@ import {
     Outfit
 } from 'next/font/google';
 import { motion, AnimatePresence } from 'framer-motion';
+import { resolveGalleryColors } from '@/lib/gallery-themes';
 import { 
     RefreshCw, 
     Download, 
@@ -71,106 +72,85 @@ export const GALLERY_COLUMNS = 'id, image_url, thumb_url, created_at, is_publish
 
 const THEMES = {
     modern: {
-        bg: 'bg-[#FFF8F0]',
-        text: 'text-neutral-900',
         fontTitle: playfair.className,
         fontBody: inter.className,
-        handwritten: 'text-neutral-800',
         layout: 'carousel',
         card: 'rounded-2xl shadow-xl border-white/40 border-t-4',
     },
     valentine: {
-        bg: 'bg-[#FFE4E1]',
-        text: 'text-[#8B0000]',
         fontTitle: playfair.className,
         fontBody: inter.className,
-        handwritten: 'text-[#D2691E]',
         layout: 'carousel',
         card: 'rounded-[3rem] shadow-2xl border-white/60 border-8',
     },
     minimal: {
-        bg: 'bg-white',
-        text: 'text-black',
         fontTitle: inter.className,
         fontBody: inter.className,
-        handwritten: 'text-gray-500',
         layout: 'grid',
         card: 'rounded-none border border-black/5 shadow-sm hover:shadow-lg',
     },
     dark: {
-        bg: 'bg-neutral-900',
-        text: 'text-white',
         fontTitle: playfair.className,
         fontBody: inter.className,
-        handwritten: 'text-gray-400',
         layout: 'carousel',
         card: 'rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-white/5',
     },
     retro: {
-        bg: 'bg-[#e9e4d9]',
-        text: 'text-[#2b2b2b]',
+        titleMax: 96,
+        titleEm: 0.66,
         fontTitle: anton.className,
         fontBody: space.className,
-        handwritten: 'text-blue-900',
         layout: 'grid',
         card: 'rounded-sm bg-white p-4 shadow-xl border-b-8 border-r-8 border-black/10 hover:border-black/20',
         titleStyle: 'uppercase tracking-tighter italic',
     },
     editorial: {
-        bg: 'bg-[#fcfcfc]',
-        text: 'text-black',
+        titleMax: 72,
+        titleEm: 0.8,
         fontTitle: bodoni.className,
         fontBody: inter.className,
-        handwritten: 'text-neutral-400',
         layout: 'asymmetrical',
         card: 'rounded-none shadow-none grayscale hover:grayscale-0 transition-all duration-700',
-        titleStyle: 'font-light tracking-[0.2em] uppercase text-7xl',
+        titleStyle: 'font-light tracking-[0.2em] uppercase',
     },
     neon: {
-        bg: 'bg-[#050505]',
-        text: 'text-white',
+        titleMax: 96,
+        titleEm: 0.82,
         fontTitle: syne.className,
         fontBody: space.className,
-        handwritten: 'text-pink-500',
         layout: 'grid',
-        card: 'rounded-2xl border border-white/10 shadow-[0_0_30px_rgba(255,255,255,0.05)] hover:border-accent hover:shadow-[0_0_30px_var(--accent-glow)]',
+        card: 'rounded-2xl border border-white/10 shadow-[0_0_30px_rgba(255,255,255,0.05)] hover:border-[var(--primary)] hover:shadow-[0_0_30px_var(--primary-glow)]',
         titleStyle: 'font-black tracking-widest uppercase',
     },
     organic: {
-        bg: 'bg-[#f4f1ea]',
-        text: 'text-[#4a4a4a]',
         fontTitle: playfair.className,
         fontBody: inter.className,
-        handwritten: 'text-[#8b9d83]',
         layout: 'carousel',
         card: 'rounded-[2.5rem] border-0 shadow-lg hover:shadow-xl',
     },
     serenity: {
-        bg: 'bg-[#ffffff]',
-        text: 'text-neutral-400',
+        titleMax: 48,
+        titleEm: 1.0,
         fontTitle: outfit.className,
         fontBody: inter.className,
-        handwritten: 'text-neutral-300',
         layout: 'grid',
         card: 'rounded-none border-b border-neutral-100 shadow-none hover:bg-neutral-50',
-        titleStyle: 'font-light tracking-[0.4em] uppercase text-5xl',
+        titleStyle: 'font-light tracking-[0.4em] uppercase',
     },
     industrial: {
-        bg: 'bg-[#1a1a1a]',
-        text: 'text-[#e5e5e5]',
+        titleMax: 128,
+        titleEm: 0.5,
         fontTitle: bebas.className,
         fontBody: space.className,
-        handwritten: 'text-yellow-500',
         layout: 'mosaic',
         card: 'rounded-none border-2 border-[#333] shadow-none hover:border-yellow-500',
-        titleStyle: 'tracking-widest text-9xl leading-none',
+        titleStyle: 'tracking-widest leading-none',
     },
     vibrant: {
-        bg: 'bg-[#ffeb3b]',
-        text: 'text-black',
+        titleMax: 96,
+        titleEm: 0.5,
         fontTitle: anton.className,
         fontBody: montserrat.className,
-        handwritten: 'text-pink-600',
         layout: 'grid',
         card: 'rounded-xl border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none',
         titleStyle: 'uppercase -rotate-2 bg-black text-white px-8 py-2 inline-block',
@@ -178,6 +158,18 @@ const THEMES = {
 };
 
 type ThemeKey = keyof typeof THEMES;
+
+/**
+ * Headline size that keeps the longest word inside the available width. Fixed Tailwind sizes
+ * overflowed on phones for long words like "Thanksgiving".
+ */
+function headlineFontSize(title: string, theme: { titleMax?: number; titleEm?: number }, sidebar: boolean) {
+    const longest = Math.max(1, ...title.split(/\s+/).map(w => w.length));
+    const max = theme.titleMax ?? 96;
+    const em = theme.titleEm ?? 0.62;
+    const room = sidebar ? 'min(88vw, 340px)' : 'min(88vw, 976px)';
+    return `clamp(24px, min(${max}px, calc(${room} / ${(longest * em).toFixed(2)})), ${max}px)`;
+}
 
 const getOptimizedUrl = (url: string) => {
     if (!url) return '';
@@ -193,6 +185,19 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
     const [event, setEvent] = useState<Event | null>(initialEvent);
     const [photos, setPhotos] = useState<Photo[]>(initialPhotos);
     const [loading, setLoading] = useState(false);
+
+    // Admin live preview: the event config editor posts unsaved settings into this page
+    const [previewSettings, setPreviewSettings] = useState<Record<string, any> | null>(null);
+    useEffect(() => {
+        if (new URLSearchParams(window.location.search).get('preview') !== '1') return;
+        const onMessage = (e: MessageEvent) => {
+            if (e.origin !== window.location.origin || e.data?.type !== 'gallery-preview') return;
+            setPreviewSettings(e.data.publicPage);
+        };
+        window.addEventListener('message', onMessage);
+        window.parent.postMessage({ type: 'gallery-preview-ready' }, window.location.origin);
+        return () => window.removeEventListener('message', onMessage);
+    }, []);
 
     // Lightbox
     const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
@@ -300,19 +305,19 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
 
     if (!event) return null;
 
-    const themeStyle = (event.config?.publicPage?.themeStyle || 'modern') as ThemeKey;
-    const primaryColor = event.config?.publicPage?.primaryColor || '#000000';
-    const secondaryColor = event.config?.publicPage?.secondaryColor || '#ffffff';
+    const pp = previewSettings ?? event.config?.publicPage ?? {};
+    const themeStyle = (pp.themeStyle || 'modern') as ThemeKey;
+    const { primary: primaryColor, secondary: secondaryColor } = resolveGalleryColors(themeStyle, pp.primaryColor, pp.secondaryColor);
     const currentTheme = THEMES[themeStyle] || THEMES.modern;
 
-    const layoutType = event.config?.publicPage?.layoutType || 'carousel';
+    const layoutType = pp.layoutType || 'carousel';
 
     const renderHeader = (isSidebar = false) => (
         <header className={`${isSidebar ? 'text-left space-y-8' : 'relative z-10 pt-16 pb-0 px-6 text-center max-w-5xl mx-auto w-full'}`}>
             {!isSidebar && (
-                <div className={`absolute top-4 left-4 md:top-10 md:left-[10%] rotate-[-10deg] ${currentTheme.handwritten} opacity-80 pointer-events-none`}>
+                <div className={`absolute top-4 left-4 md:top-10 md:left-[10%] rotate-[-10deg] opacity-80 pointer-events-none`} style={{ color: primaryColor }}>
                     <span className={`${caveat.className} text-xl md:text-2xl`}>
-                        {event.config?.publicPage?.handwrittenNote || "All yours!"}
+                        {pp.handwrittenNote || "All yours!"}
                     </span>
                     <svg width="30" height="30" viewBox="0 0 100 100" className="opacity-80 mt-1 ml-2 md:w-[40px] md:h-[40px]"><path d="M10,10 Q50,50 90,10" fill="none" stroke="currentColor" strokeWidth="3" /></svg>
                 </div>
@@ -320,25 +325,28 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
             
             <div 
                 className={`inline-block px-4 py-1 rounded-full text-xs md:text-sm font-medium mb-4 transform -rotate-1 shadow-sm`}
-                style={{ backgroundColor: secondaryColor, color: getContrastColor(secondaryColor) }}
+                style={{ backgroundColor: primaryColor, color: getContrastColor(primaryColor) }}
             >
                 {new Date(event.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
             </div>
             
             <div className={`${isSidebar ? 'text-left' : 'text-center'} mb-4`}>
-                <h1 className={`text-5xl md:text-8xl font-black tracking-tighter leading-[0.9] ${currentTheme.fontTitle} ${(currentTheme as any).titleStyle || ''}`}>
-                    {event.config?.publicPage?.title || event.name}
+                <h1
+                    className={`font-black tracking-tighter leading-[0.95] max-w-full break-words ${currentTheme.fontTitle} ${(currentTheme as any).titleStyle || ''}`}
+                    style={{ fontSize: headlineFontSize(pp.title || event.name, currentTheme as { titleMax?: number; titleEm?: number }, isSidebar), overflowWrap: 'anywhere' }}
+                >
+                    {pp.title || event.name}
                 </h1>
             </div>
             
             <p className={`text-base md:text-xl opacity-70 ${isSidebar ? 'text-left' : 'text-center max-w-2xl mx-auto'} leading-relaxed ${currentTheme.fontBody}`}>
-                {event.config?.publicPage?.subtitle || "Capturing moments, creating memories."}
+                {pp.subtitle || "Capturing moments, creating memories."}
             </p>
 
             {isSidebar && (
-                <div className={`${currentTheme.handwritten} opacity-80 pt-10`}>
+                <div className="opacity-80 pt-10" style={{ color: primaryColor }}>
                     <span className={`${caveat.className} text-2xl md:text-3xl`}>
-                        {event.config?.publicPage?.handwrittenNote || "All yours!"}
+                        {pp.handwrittenNote || "All yours!"}
                     </span>
                 </div>
             )}
@@ -361,8 +369,10 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
 
     return (
         <main 
-            className={`min-h-screen relative overflow-x-hidden flex flex-col ${currentTheme.bg} ${currentTheme.text} transition-colors duration-500`}
+            className="min-h-screen relative overflow-x-hidden flex flex-col transition-colors duration-500"
             style={{ 
+                backgroundColor: secondaryColor,
+                color: primaryColor,
                 '--primary': primaryColor, 
                 '--secondary': secondaryColor,
                 '--primary-glow': `${primaryColor}44` 
