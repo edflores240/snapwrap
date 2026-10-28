@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import GalleryClient, { PAGE_SIZE, PHOTO_COLUMNS, type Event, type Photo } from './GalleryClient';
+import { GALLERY_PAGE_SIZE as PAGE_SIZE, GALLERY_PHOTO_COLUMNS as PHOTO_COLUMNS } from '@/lib/gallery-queries';
+import GalleryClient, { type Event, type Photo } from './GalleryClient';
 
 // Photos are added while an event is running, so never serve a cached copy
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,7 @@ export default async function PublicGalleryPage({ params }: { params: Promise<{ 
             .range(0, PAGE_SIZE - 1),
     ]);
 
+    if (photosRes.error) console.error('Gallery photos query failed:', photosRes.error.message);
     if (eventRes.error || !eventRes.data) notFound();
 
     return (

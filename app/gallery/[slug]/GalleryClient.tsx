@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { GALLERY_PAGE_SIZE as PAGE_SIZE, GALLERY_PHOTO_COLUMNS as PHOTO_COLUMNS } from '@/lib/gallery-queries';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Download, Printer, X, Layout, Calendar, Clock, Camera } from 'lucide-react';
@@ -22,8 +23,6 @@ export interface Photo {
     created_at: string;
 }
 
-export const PAGE_SIZE = 24;
-export const PHOTO_COLUMNS = 'id, image_url, thumb_url, created_at';
 
 interface Props {
     initialEvent: Event;
