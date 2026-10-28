@@ -19,3 +19,17 @@ export async function getCroppedBlob(
         canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('Canvas empty'))), 'image/jpeg', quality);
     });
 }
+
+/** Downscales an image blob to a small JPEG for grids and previews. */
+export async function makeThumbnail(blob: Blob, maxWidth = 480, quality = 0.75): Promise<Blob> {
+    const bitmap = await createImageBitmap(blob);
+    const ratio = Math.min(1, maxWidth / bitmap.width);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * ratio);
+    canvas.height = Math.round(bitmap.height * ratio);
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return new Promise((resolve, reject) => {
+        canvas.toBlob(b => (b ? resolve(b) : reject(new Error('Canvas empty'))), 'image/jpeg', quality);
+    });
+}

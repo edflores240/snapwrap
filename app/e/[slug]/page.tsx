@@ -7,6 +7,8 @@ import { TemplateConfig, PRESET_TEMPLATES } from '@/components/templates/Templat
 import TemplatePreview from '@/components/templates/TemplatePreview';
 import PrintDesigner from '@/components/PrintDesigner';
 import QRCode from 'react-qr-code';
+import { enqueuePhoto, initUploadQueue, newPhotoId, useUploadQueue } from '@/lib/upload-queue';
+import { makeThumbnail } from '@/lib/image-utils';
 
 import {
     FlipHorizontal, Video, ZoomIn, ZoomOut,
@@ -109,6 +111,16 @@ export default function PublicBoothPage() {
     // QR / Upload state
     const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
     const [uploadingComposite, setUploadingComposite] = useState(false);
+    const uploadQueue = useUploadQueue();
+
+    // Resume any photos left in the queue from a previous session, and warn before closing with unsynced photos
+    useEffect(() => { initUploadQueue(); }, []);
+    useEffect(() => {
+        if (uploadQueue.pending === 0) return;
+        const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', warn);
+        return () => window.removeEventListener('beforeunload', warn);
+    }, [uploadQueue.pending]);
 
     // Camera
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -495,7 +507,7 @@ export default function PublicBoothPage() {
     // ── Generate Composite + Upload + QR ───────────────────────────────
 
     const handleConfirmAndGenerateQR = async () => {
-        const url = await generateAndSaveComposite();
+        const url = await queueDigitalCopy();
         if (url) {
             setDownloadUrl(url);
             setStep('qr');
@@ -512,45 +524,30 @@ export default function PublicBoothPage() {
 
 
 
-    const generateAndSaveComposite = async (existingDataUrl?: string) => {
+    /**
+     * Renders the digital copy and hands it to the background upload queue.
+     * The photo id is generated here, so the QR link is valid immediately —
+     * /download/[id] shows a "preparing" state until the queue finishes syncing.
+     */
+    const queueDigitalCopy = async () => {
         if (!selectedTemplate || !event) return null;
         setUploadingComposite(true);
 
+        let compositeDataUrl: string | null = null;
         try {
-            const compositeDataUrl = existingDataUrl || await generateComposite();
+            // Digital copies don't need print resolution: 3x @ 0.85 is ~4x smaller than 4x @ 0.95
+            compositeDataUrl = await generateComposite({ scale: 3, quality: 0.85 });
             if (!compositeDataUrl) throw new Error('Failed to generate composite');
 
-            const res = await fetch(compositeDataUrl);
-            const blob = await res.blob();
-            const fileName = `${event.slug}/${Date.now()}.jpg`;
+            const full = await (await fetch(compositeDataUrl)).blob();
+            const thumb = await makeThumbnail(full).catch(() => null);
+            const id = newPhotoId();
 
-            const { error: uploadError } = await supabase.storage
-                .from('booth-photos')
-                .upload(fileName, blob, { contentType: 'image/jpeg', upsert: false });
-
-            if (uploadError) {
-                console.error('Upload error:', uploadError);
-                handleFallbackDownload(compositeDataUrl);
-                return null;
-            }
-
-            const { data: urlData } = supabase.storage.from('booth-photos').getPublicUrl(fileName);
-            const publicUrl = urlData.publicUrl;
-
-            const { data: photoRecord, error: insertError } = await supabase
-                .from('photos')
-                .insert({ event_id: event.id, storage_path: fileName, image_url: publicUrl })
-                .select('id').single();
-
-            if (insertError) {
-                console.error('Insert error:', insertError);
-                handleFallbackDownload(compositeDataUrl);
-                return null;
-            }
-
-            return `${window.location.origin}/download/${photoRecord.id}`;
+            await enqueuePhoto({ id, eventId: event.id, eventSlug: event.slug, full, thumb });
+            return `${window.location.origin}/download/${id}`;
         } catch (err) {
-            console.error('Error in generateAndSaveComposite:', err);
+            console.error('Error queueing digital copy:', err);
+            if (compositeDataUrl) handleFallbackDownload(compositeDataUrl);
             return null;
         } finally {
             setUploadingComposite(false);
@@ -567,11 +564,11 @@ const handleFallbackDownload = (dataUrl: string) => {
         setStep('done');
     };
 
-    const generateComposite = async (): Promise<string | null> => {
+    const generateComposite = async (opts: { scale?: number; quality?: number } = {}): Promise<string | null> => {
         if (!selectedTemplate) { return null; }
 
         const compositeCanvas = document.createElement('canvas');
-        const SCALE = 4; // High resolution output
+        const SCALE = opts.scale ?? 4; // High resolution output (print default)
         const W = selectedTemplate.width * SCALE;
         const H = selectedTemplate.height * SCALE;
 
@@ -841,7 +838,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                 ctx.fillText(selectedTemplate.watermarkText.toUpperCase(), W / 2, H - (10 * SCALE));
             }
 
-            return compositeCanvas.toDataURL('image/jpeg', 0.95);
+            return compositeCanvas.toDataURL('image/jpeg', opts.quality ?? 0.95);
         } catch (err) {
             console.error('Error in generateComposite:', err);
             return null;
@@ -1766,6 +1763,19 @@ const handleFallbackDownload = (dataUrl: string) => {
 
 
                         </div>
+                    </div>
+                )}
+
+                {/* ── UPLOAD SYNC STATUS ───────────────────────────────── */}
+                {uploadQueue.pending > 0 && (
+                    <div
+                        className="fixed bottom-4 left-4 z-[250] flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold text-white border border-white/15"
+                        style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(10px)' }}
+                    >
+                        <span className={`w-2 h-2 rounded-full ${uploadQueue.status === 'syncing' ? 'bg-sky-400 animate-pulse' : 'bg-amber-400'}`} />
+                        {uploadQueue.status === 'syncing'
+                            ? `Syncing ${uploadQueue.pending} photo${uploadQueue.pending === 1 ? '' : 's'}…`
+                            : `${uploadQueue.pending} photo${uploadQueue.pending === 1 ? '' : 's'} waiting to sync${uploadQueue.status === 'offline' ? ' (offline)' : ''}`}
                     </div>
                 )}
 

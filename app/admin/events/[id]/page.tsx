@@ -276,7 +276,7 @@ export default function EventDetailPage() {
         try {
             const { data, error } = await supabase
                 .from('photos')
-                .select('id, created_at, image_url, is_published')
+                .select('id, created_at, image_url, thumb_url, is_published')
                 .eq('event_id', params.id as string)
                 .order('created_at', { ascending: false })
                 .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
@@ -689,7 +689,7 @@ export default function EventDetailPage() {
                                             className={`relative w-full h-full transition-opacity duration-500 ${!photo.is_published ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'} ${selectedPhotos.includes(photo.id) ? 'scale-90 opacity-60' : ''}`}
                                         >
                                             <Image
-                                                src={photo.image_url}
+                                                src={photo.thumb_url || photo.image_url}
                                                 alt="Archived Capture"
                                                 fill
                                                 className="object-cover transition-transform duration-700 group-hover:scale-105"

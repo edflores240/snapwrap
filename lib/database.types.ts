@@ -47,6 +47,7 @@ export interface Database {
                     storage_path: string
                     event_id: string | null
                     image_url: string | null
+                    thumb_url: string | null
                     created_at: string
                 }
                 Insert: {
@@ -54,6 +55,7 @@ export interface Database {
                     storage_path: string
                     event_id?: string | null
                     image_url?: string | null
+                    thumb_url?: string | null
                     created_at?: string
                 }
                 Update: {
@@ -61,6 +63,7 @@ export interface Database {
                     storage_path?: string
                     event_id?: string | null
                     image_url?: string | null
+                    thumb_url?: string | null
                     created_at?: string
                 }
             }
