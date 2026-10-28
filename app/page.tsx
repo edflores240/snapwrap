@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { Inter, Playfair_Display } from 'next/font/google';
 import { Camera, ArrowRight, Laptop, Sparkles, Smartphone, Download, Check, Shield, Layers, Users, Calendar, FileText, Zap, Globe, Palette, MessageSquare } from 'lucide-react';
+import Logo from '@/components/ui/Logo';
 
 const inter = Inter({ subsets: ['latin'] });
 const playfair = Playfair_Display({ subsets: ['latin'] });
@@ -53,9 +54,7 @@ export default function Home() {
       <nav className="sticky top-0 z-50 bg-[#FAF8F5]/85 backdrop-blur-md border-b border-[#ECE8DF]/80 px-6 py-4">
         <div className="max-w-7xl mx-auto flex justify-between items-center w-full">
           <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-lg bg-[#2A2724] flex items-center justify-center text-white transition-transform group-hover:rotate-6">
-              <Camera size={16} />
-            </div>
+            <Logo size={32} priority className="transition-transform group-hover:rotate-6" />
             <span className={`text-2xl font-black tracking-tight ${playfair.className}`}>
               SnapWrap
             </span>

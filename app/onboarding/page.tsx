@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { createProfile, isUsernameTaken } from '@/lib/auth';
 import { Inter, Playfair_Display, Caveat } from 'next/font/google';
 import { CheckCircle, Loader2 } from 'lucide-react';
+import Logo from '@/components/ui/Logo';
 
 const inter = Inter({ subsets: ['latin'] });
 const playfair = Playfair_Display({ subsets: ['latin'] });
@@ -235,7 +236,8 @@ export default function OnboardingPage() {
                 )}
             </div>
 
-            <div className="absolute bottom-6 text-center w-full text-[10px] text-neutral-300 uppercase tracking-widest">
+            <div className="absolute bottom-6 flex flex-col items-center gap-2 w-full text-[10px] text-neutral-300 uppercase tracking-widest">
+                <Logo size={24} className="opacity-60" />
                 SnapWrap
             </div>
         </main>

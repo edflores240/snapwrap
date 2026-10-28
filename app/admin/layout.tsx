@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import type { User } from '@supabase/supabase-js';
 import type { Profile } from '@/lib/auth';
 import { Inter, Playfair_Display } from 'next/font/google';
+import Logo from '@/components/ui/Logo';
 
 const inter = Inter({ subsets: ['latin'] });
 const playfair = Playfair_Display({ subsets: ['latin'] });
@@ -15,7 +16,6 @@ import {
     Calendar,
     LogOut,
     ChevronRight,
-    Camera,
     UserCircle,
     Menu,
     X,
@@ -125,7 +125,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         return (
             <div className={`min-h-screen flex items-center justify-center bg-[#FAF8F5] ${inter.className}`}>
                 <div className="flex flex-col items-center gap-4">
-                    <div className="w-8 h-8 border-2 border-neutral-200 border-t-[#2A2724] rounded-full animate-spin" />
+                    <Logo size={48} className="animate-pulse" />
                     <div className={`text-[#2A2724] text-sm font-black tracking-widest uppercase ${playfair.className}`}>SnapWrap</div>
                 </div>
             </div>
@@ -146,9 +146,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <>
             <div className="p-6 flex items-center justify-between border-b border-[#ECE8DF]">
                 <Link href="/admin/dashboard" className="flex items-center gap-2 group" onClick={() => setSidebarOpen(false)}>
-                    <div className="w-8 h-8 bg-[#2A2724] rounded-lg flex items-center justify-center text-white transition-transform group-hover:scale-105">
-                        <Camera size={18} />
-                    </div>
+                    <Logo size={32} className="transition-transform group-hover:scale-105" />
                     <h1 className={`text-xl font-black tracking-tight ${playfair.className}`}>SnapWrap</h1>
                 </Link>
                 {/* Close button — mobile only */}
@@ -237,9 +235,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     {/* Mobile top bar */}
                     <div className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-[#FAF8F5]/90 backdrop-blur-md border-b border-[#ECE8DF]">
                         <Link href="/admin/dashboard" className="flex items-center gap-2">
-                            <div className="w-7 h-7 bg-[#2A2724] rounded-lg flex items-center justify-center">
-                                <Camera size={14} className="text-white" />
-                            </div>
+                            <Logo size={28} />
                             <span className={`font-black tracking-tight text-sm ${playfair.className}`}>SnapWrap</span>
                         </Link>
                         <button

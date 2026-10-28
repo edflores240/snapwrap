@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import Logo from '@/components/ui/Logo';
 
 interface PhotoData {
     id: string;
@@ -125,6 +126,7 @@ export default function DownloadPage() {
                 <div className="max-w-lg w-full text-center">
                     {/* Header */}
                     <div className="mb-8">
+                        <Logo size={56} className="mx-auto mb-4" priority />
                         <h1 className="text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400">
                             SnapWrap
                         </h1>
