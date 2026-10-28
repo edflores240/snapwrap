@@ -117,13 +117,18 @@ async function uploadItem(item: StoredPhoto) {
     const imageUrl = await uploadFile(`${item.eventSlug}/${item.id}.jpg`, item.full);
     const thumbUrl = item.thumb ? await uploadFile(`${item.eventSlug}/thumbs/${item.id}.jpg`, item.thumb) : null;
 
-    const { error } = await supabase.from('photos').insert({
+    const row = {
         id: item.id,
         event_id: item.eventId,
         storage_path: `${item.eventSlug}/${item.id}.jpg`,
         image_url: imageUrl,
-        thumb_url: thumbUrl,
-    });
+    };
+    let { error } = await supabase.from('photos').insert({ ...row, thumb_url: thumbUrl });
+    // 42703 / PGRST204 = thumb_url column not migrated yet: save the photo anyway rather than lose it
+    if (error && (error.code === '42703' || error.code === 'PGRST204')) {
+        console.warn('photos.thumb_url is missing; run the 20260526000000_photos_thumb_url migration');
+        ({ error } = await supabase.from('photos').insert(row));
+    }
     // 23505 = row already inserted by an earlier attempt
     if (error && error.code !== '23505') throw error;
 }
@@ -160,7 +165,9 @@ async function processQueue() {
                 const n = (attempts.get(due.id) ?? 0) + 1;
                 attempts.set(due.id, n);
                 nextAttemptAt.set(due.id, Date.now() + Math.min(60_000, 2_000 * 2 ** n));
-                console.error(`Upload failed for ${due.id} (attempt ${n}):`, err);
+                // Supabase errors are class instances whose fields don't enumerate, so log them explicitly
+                const e = err as { message?: string; code?: string; statusCode?: string | number; details?: string };
+                console.error(`Upload failed for ${due.id} (attempt ${n}):`, e.message ?? err, { code: e.code, status: e.statusCode, details: e.details });
             }
         }
     } finally {
