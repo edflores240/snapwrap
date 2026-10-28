@@ -21,6 +21,7 @@ import {
     ArrowUpRight, 
     Clock, 
     Trash2, 
+    Copy,
     Plus,
     Download,
     Palette,
@@ -227,6 +228,25 @@ export default function EventDetailPage() {
     const [templates, setTemplates] = useState<TemplateConfig[]>([]);
     const [showEditor, setShowEditor] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState<TemplateConfig | null>(null);
+
+    /** Saves a copy right next to the original, then opens it in the designer */
+    const handleDuplicateTemplate = async (tpl: TemplateConfig) => {
+        if (!event) return;
+        const copy: TemplateConfig = {
+            ...JSON.parse(JSON.stringify(tpl)),
+            id: `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            name: `${tpl.name} (copy)`,
+        };
+        const at = templates.findIndex(t => t.id === tpl.id);
+        const updated = [...templates.slice(0, at + 1), copy, ...templates.slice(at + 1)];
+        setTemplates(updated);
+        const config = { ...(event.config || {}), templates: updated };
+        setEvent({ ...event, config });
+        setEditingTemplate(copy);
+        setShowEditor(true);
+        const { error } = await supabase.from('events').update({ config }).eq('id', event.id);
+        if (error) console.error('Failed to save the duplicated template:', error.message);
+    };
 
     // Custom Confirm State
     const [confirmModal, setConfirmModal] = useState({
@@ -1223,6 +1243,13 @@ export default function EventDetailPage() {
                                                         </p>
                                                     </div>
                                                     <div className="flex gap-1">
+                                                        <button
+                                                            onClick={() => handleDuplicateTemplate(tpl)}
+                                                            title="Duplicate"
+                                                            className="p-2.5 bg-[#FAF8F5] hover:bg-[#2A2724] hover:text-white rounded-full transition-all duration-300 border border-[#ECE8DF]"
+                                                        >
+                                                            <Copy size={14} />
+                                                        </button>
                                                         <button 
                                                             onClick={() => { setEditingTemplate(tpl); setShowEditor(true); }} 
                                                             className="p-2.5 bg-[#FAF8F5] hover:bg-[#2A2724] hover:text-white rounded-full transition-all duration-300 border border-[#ECE8DF]"
