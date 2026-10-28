@@ -9,6 +9,8 @@ import PrintDesigner from '@/components/PrintDesigner';
 import QRCode from 'react-qr-code';
 import { enqueuePhoto, initUploadQueue, newPhotoId, useUploadQueue } from '@/lib/upload-queue';
 import { makeThumbnail } from '@/lib/image-utils';
+import { drawTextElement, loadTextFonts, textElementStyle } from '@/lib/template-text';
+import { drawSticker, drawTemplateBackground, overlayStyle, stickerBoxStyle, stickerImageStyle } from '@/lib/template-render';
 
 import {
     FlipHorizontal, Video, ZoomIn, ZoomOut,
@@ -567,6 +569,9 @@ const handleFallbackDownload = (dataUrl: string) => {
     const generateComposite = async (opts: { scale?: number; quality?: number } = {}): Promise<string | null> => {
         if (!selectedTemplate) { return null; }
 
+        // Canvas can't draw a web font that hasn't loaded yet; wait for the template's fonts first
+        await loadTextFonts(selectedTemplate.textElements || []);
+
         const compositeCanvas = document.createElement('canvas');
         const SCALE = opts.scale ?? 4; // High resolution output (print default)
         const W = selectedTemplate.width * SCALE;
@@ -590,18 +595,11 @@ const handleFallbackDownload = (dataUrl: string) => {
 
         try {
             // ── 1. Background ────────────────────────────────────────────
+            let bgImage: HTMLImageElement | null = null;
             if (selectedTemplate.backgroundImage) {
-                try {
-                    const bg = await loadImage(selectedTemplate.backgroundImage);
-                    ctx.drawImage(bg, 0, 0, W, H);
-                } catch {
-                    ctx.fillStyle = selectedTemplate.background || '#ffffff';
-                    ctx.fillRect(0, 0, W, H);
-                }
-            } else {
-                ctx.fillStyle = selectedTemplate.background || '#ffffff';
-                ctx.fillRect(0, 0, W, H);
+                try { bgImage = await loadImage(selectedTemplate.backgroundImage); } catch { /* fall back to the colour */ }
             }
+            drawTemplateBackground(ctx, selectedTemplate, W, H, bgImage);
 
             // ── 2. Unified Z-Index Sorted Rendering ──────────────────────
             // Uses direct zIndex values from the template (same as TemplateVisualizer/TemplateDesigner)
@@ -714,18 +712,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                     const stk = item.data;
                     try {
                         const img = await loadImage(stk.src);
-                        const stkW = (stk.width / selectedTemplate.width) * W;
-                        const stkH = (img.height / img.width) * stkW;
-                        const stkX = (stk.x / 100) * W;
-                        const stkY = (stk.y / 100) * H;
-
-                        ctx.save();
-                        ctx.translate(stkX, stkY);
-                        ctx.rotate(((stk.rotation || 0) * Math.PI) / 180);
-                        ctx.scale(stk.flipX ? -1 : 1, stk.flipY ? -1 : 1);
-                        ctx.globalAlpha = stk.opacity ?? 1;
-                        ctx.drawImage(img, -stkW / 2, -stkH / 2, stkW, stkH);
-                        ctx.restore();
+                        drawSticker(ctx, img, stk, (stk.x / 100) * W, (stk.y / 100) * H, SCALE);
                     } catch (e) {
                         console.warn('Failed to load sticker:', stk.src, e);
                     }
@@ -787,33 +774,7 @@ const handleFallbackDownload = (dataUrl: string) => {
 
                 } else if (item.type === 'text') {
                     const txt = item.data;
-                    const txtX = (txt.x / 100) * W;
-                    const txtY = (txt.y / 100) * H;
-                    const fontSize = txt.fontSize * SCALE;
-
-                    ctx.save();
-                    ctx.translate(txtX, txtY);
-                    ctx.rotate(((txt.rotation || 0) * Math.PI) / 180);
-                    ctx.globalAlpha = txt.opacity ?? 1;
-                    ctx.font = `${txt.fontStyle || ''} ${txt.fontWeight || ''} ${fontSize}px ${txt.fontFamily || 'sans-serif'}`.trim();
-                    ctx.fillStyle = txt.color || '#000000';
-                    ctx.textAlign = (txt.textAlign as CanvasTextAlign) || 'center';
-                    ctx.textBaseline = 'middle';
-
-                    if (txt.letterSpacing) {
-                        // Manual letter spacing
-                        const chars = txt.text.split('');
-                        let xOffset = 0;
-                        const totalWidth = chars.reduce((acc: number, ch: string) => acc + ctx.measureText(ch).width + (txt.letterSpacing * SCALE), 0);
-                        let startX = txt.textAlign === 'center' ? -totalWidth / 2 : 0;
-                        chars.forEach((ch: string) => {
-                            ctx.fillText(ch, startX + xOffset, 0);
-                            xOffset += ctx.measureText(ch).width + (txt.letterSpacing * SCALE);
-                        });
-                    } else {
-                        ctx.fillText(txt.text, 0, 0);
-                    }
-                    ctx.restore();
+                    drawTextElement(ctx, txt, (txt.x / 100) * W, (txt.y / 100) * H, SCALE);
                 }
             }
 
@@ -1174,6 +1135,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                         backgroundPosition: 'center',
                                     }}
                                 />
+                                {overlayStyle(selectedTemplate) && <div style={overlayStyle(selectedTemplate)!} />}
 
                                 {/* Unified sorted render: slots, stickers, text, shapes in z-order */}
                                 {[
@@ -1236,16 +1198,8 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     if (item.type === 'sticker') {
                                         const stk = item.data;
                                         return (
-                                            <div key={stk.id} style={{
-                                                position: 'absolute',
-                                                left: `${stk.x}%`,
-                                                top: `${stk.y}%`,
-                                                width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
-                                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
-                                                zIndex: item.zIndex,
-                                                pointerEvents: 'none',
-                                            }}>
-                                                <img src={stk.src} className="w-full h-auto drop-shadow-md" />
+                                            <div key={stk.id} style={stickerBoxStyle(stk, n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`, item.zIndex)}>
+                                                <img src={stk.src} alt="" style={stickerImageStyle(stk)} draggable={false} />
                                             </div>
                                         );
                                     }
@@ -1283,21 +1237,15 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     if (item.type !== 'text') return null;
                                     const el = item.data;
                                     return (
-                                        <div key={el.id} style={{
-                                            position: 'absolute',
-                                            left: `${el.x}%`,
-                                            top: `${el.y}%`,
-                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                            color: el.color,
-                                            fontSize: `calc(${el.fontSize} / ${selectedTemplate.width} * 100cqw)`,
-                                            fontFamily: el.fontFamily,
-                                            fontWeight: el.fontWeight,
-                                            fontStyle: el.fontStyle,
-                                            width: 'max-content',
-                                            textShadow: el.textShadow,
-                                            zIndex: item.zIndex,
-                                            pointerEvents: 'none',
-                                        }}>{el.text}</div>
+                                        <div
+                                            key={el.id}
+                                            style={{
+                                                ...textElementStyle(el, n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`, item.zIndex),
+                                                pointerEvents: 'none',
+                                            }}
+                                        >
+                                            {el.text}
+                                        </div>
                                     );
                                 })}
 
@@ -1612,6 +1560,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     backgroundPosition: 'center',
                                 }}
                             />
+                                {overlayStyle(selectedTemplate) && <div style={overlayStyle(selectedTemplate)!} />}
 
                             {/* Unified sorted render: slots (draggable), stickers, text, shapes in z-order */}
                             <div className="absolute inset-0 w-full h-full"
@@ -1656,16 +1605,8 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     if (item.type === 'sticker') {
                                         const stk = item.data;
                                         return (
-                                            <div key={stk.id} style={{
-                                                position: 'absolute',
-                                                left: `${stk.x}%`,
-                                                top: `${stk.y}%`,
-                                                width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
-                                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
-                                                zIndex: item.zIndex,
-                                                pointerEvents: 'none',
-                                            }}>
-                                                <img src={stk.src} className="w-full h-auto drop-shadow-md" />
+                                            <div key={stk.id} style={stickerBoxStyle(stk, n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`, item.zIndex)}>
+                                                <img src={stk.src} alt="" style={stickerImageStyle(stk)} draggable={false} />
                                             </div>
                                         );
                                     }
@@ -1703,21 +1644,13 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     if (item.type !== 'text') return null;
                                     const el = item.data;
                                     return (
-                                        <div key={el.id} style={{
-                                            position: 'absolute',
-                                            left: `${el.x}%`,
-                                            top: `${el.y}%`,
-                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                            color: el.color,
-                                            fontSize: `calc(${el.fontSize} / ${selectedTemplate.width} * 100cqw)`,
-                                            fontFamily: el.fontFamily,
-                                            fontWeight: el.fontWeight,
-                                            fontStyle: el.fontStyle,
-                                            width: 'max-content',
-                                            textShadow: el.textShadow,
-                                            zIndex: item.zIndex,
-                                            pointerEvents: 'none',
-                                        }}>
+                                        <div
+                                            key={el.id}
+                                            style={{
+                                                ...textElementStyle(el, n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`, item.zIndex),
+                                                pointerEvents: 'none',
+                                            }}
+                                        >
                                             {el.text}
                                         </div>
                                     );

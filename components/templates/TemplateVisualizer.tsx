@@ -1,9 +1,11 @@
 'use client';
 
-import React, { forwardRef, useImperativeHandle, useRef, useEffect, useState } from 'react';
+import React, { forwardRef, useImperativeHandle, useMemo, useRef, useEffect, useState } from 'react';
 import { Stage, Layer, Rect, Text, Image as KonvaImage, Group, Ellipse, RegularPolygon, Star as KonvaStar, Line as KonvaLine } from 'react-konva';
 import { TemplateConfig, ShapeElement } from './TemplateDesigner';
 import useImage from 'use-image';
+import { drawTemplateBackground } from '@/lib/template-render';
+import { TEXT_LINE_HEIGHT, loadTextFonts, measureTextBlock, parseTextShadows } from '@/lib/template-text';
 
 interface TemplateVisualizerProps {
     template: TemplateConfig;
@@ -21,9 +23,17 @@ export interface TemplateVisualizerHandle {
 const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualizerProps>(
     ({ template, capturedPhotos: capturedPhotosProp, width: displayWidth, hideSlots, showForegroundOnly, showBackgroundOnly }, ref) => {
         const stageRef = useRef<any>(null);
-        const [bgImg] = useImage(template.backgroundImage || '');
+        const [bgImg] = useImage(template.backgroundImage || '', 'anonymous');
         
         const capturedPhotos = capturedPhotosProp || [];
+
+        // Text is measured with the real font, so wait for web fonts and then redraw
+        const [fontsReady, setFontsReady] = useState(0);
+        useEffect(() => {
+            let live = true;
+            loadTextFonts(template.textElements || []).then(() => live && setFontsReady(n => n + 1));
+            return () => { live = false; };
+        }, [template.textElements]);
         
         const [stickerImages, setStickerImages] = useState<{id: string, img: HTMLImageElement | null, sticker: any}[]>([]);
         const [photoImages, setPhotoImages] = useState<(HTMLImageElement | null)[]>([]);
@@ -59,6 +69,17 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
         const width = template.width * scale;
         const height = template.height * scale;
 
+        const backgroundCanvas = useMemo(() => {
+            if (typeof document === 'undefined') return null;
+            const c = document.createElement('canvas');
+            c.width = Math.max(1, Math.round(width));
+            c.height = Math.max(1, Math.round(height));
+            const ctx = c.getContext('2d');
+            if (!ctx) return null;
+            drawTemplateBackground(ctx, template, c.width, c.height, bgImg ?? null);
+            return c;
+        }, [template.background, template.backgroundImage, template.backgroundOverlay, template.backgroundOverlayOpacity, bgImg, width, height]); // eslint-disable-line react-hooks/exhaustive-deps
+
         useImperativeHandle(ref, () => ({
             getSnapshot: async () => {
                 if (!stageRef.current) return { background: '', foreground: '' };
@@ -78,21 +99,9 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
             >
                 {!showBackgroundOnly && (
                     <Layer>
-                        {/* 1. Background Color */}
-                        <Rect
-                            width={width}
-                            height={height}
-                            fill={template.background?.includes('gradient') ? undefined : template.background}
-                        />
-
-                        {/* 2. Background Image (if any) */}
-                        {bgImg && (
-                            <KonvaImage
-                                image={bgImg}
-                                width={width}
-                                height={height}
-                                listening={false}
-                            />
+                        {/* 1. Background: colour/gradient, image and tint, drawn by the same code as the final photo */}
+                        {backgroundCanvas && (
+                            <KonvaImage image={backgroundCanvas} width={width} height={height} listening={false} />
                         )}
 
                         {/* 3. Unified Content Rendering (Sorted by Z-Index) */}
@@ -153,7 +162,17 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                     const img = imgEntry?.img;
                                     if (!img) return null;
                                     const sw = (stk.width / template.width) * width;
-                                    const sh = (img.height / img.width) * sw;
+                                    const cropped = (stk.height || 0) > 0;
+                                    const sh = cropped ? (stk.height / template.width) * width : (img.height / img.width) * sw;
+                                    // object-fit: cover + object-position, as in the editor
+                                    const k = Math.max(sw / img.width, sh / img.height);
+                                    const cw = sw / k, ch = sh / k;
+                                    const crop = cropped ? {
+                                        x: (img.width - cw) * ((50 + (stk.cropX || 0)) / 100),
+                                        y: (img.height - ch) * ((50 + (stk.cropY || 0)) / 100),
+                                        width: cw,
+                                        height: ch,
+                                    } : undefined;
                                     return (
                                         <KonvaImage
                                             key={stk.id}
@@ -162,6 +181,7 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                             y={(stk.y / 100) * height}
                                             width={sw}
                                             height={sh}
+                                            crop={crop}
                                             rotation={stk.rotation}
                                             offsetX={sw / 2}
                                             offsetY={sh / 2}
@@ -212,22 +232,35 @@ const TemplateVisualizer = forwardRef<TemplateVisualizerHandle, TemplateVisualiz
                                     return null;
                                 } else if (item.type === 'text') {
                                     const txt = item.data;
+                                    // Same box the DOM and canvas renderers use, centred on (x, y) like them
+                                    const block = measureTextBlock(txt, scale);
+                                    const shadow = parseTextShadows(txt.textShadow)[0];
                                     return (
                                         <Text
-                                            key={txt.id}
+                                            key={`${txt.id}-${fontsReady}`}
                                             text={txt.text}
                                             x={(txt.x / 100) * width}
                                             y={(txt.y / 100) * height}
+                                            width={Math.ceil(block.width) + 2}
+                                            offsetX={(Math.ceil(block.width) + 2) / 2}
+                                            offsetY={block.height / 2}
                                             fontSize={txt.fontSize * scale}
                                             fontFamily={txt.fontFamily}
+                                            fontStyle={`${txt.fontStyle === 'italic' ? 'italic ' : ''}${txt.fontWeight}`.trim()}
+                                            lineHeight={TEXT_LINE_HEIGHT}
                                             fill={txt.color}
-                                            fontStyle={`${txt.fontStyle} ${txt.fontWeight}`}
                                             align={txt.textAlign as any}
-                                            letterSpacing={txt.letterSpacing}
+                                            letterSpacing={(txt.letterSpacing || 0) * scale}
                                             opacity={txt.opacity}
                                             rotation={txt.rotation}
-                                            offsetX={(txt.fontSize * scale * txt.text.length) / 4}
-                                            offsetY={(txt.fontSize * scale) / 2}
+                                            stroke={txt.textStrokeWidth ? txt.textStroke || '#000000' : undefined}
+                                            strokeWidth={(txt.textStrokeWidth || 0) * scale}
+                                            shadowColor={shadow?.color}
+                                            shadowOffsetX={(shadow?.x || 0) * scale}
+                                            shadowOffsetY={(shadow?.y || 0) * scale}
+                                            shadowBlur={(shadow?.blur || 0) * scale}
+                                            shadowEnabled={!!shadow}
+                                            listening={false}
                                         />
                                     );
                                 }

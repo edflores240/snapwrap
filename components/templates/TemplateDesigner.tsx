@@ -15,6 +15,7 @@ import { supabase } from '@/lib/supabase';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
 import TemplateVisualizer, { TemplateVisualizerHandle } from './TemplateVisualizer';
+import { textElementStyle } from '@/lib/template-text';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -2924,22 +2925,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                     <div
                                         key={txt.id}
                                         className={`absolute pointer-events-auto px-2 py-1 group ${txt.locked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} ${selectedTextId === txt.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''}`}
-                                        style={{
-                                            left: `${txt.x}%`,
-                                            top: `${txt.y}%`,
-                                            transform: `translate(-50%, -50%) rotate(${txt.rotation || 0}deg)`,
-                                            fontSize: txt.fontSize,
-                                            fontFamily: txt.fontFamily,
-                                            color: txt.color,
-                                            fontWeight: txt.fontWeight,
-                                            fontStyle: txt.fontStyle,
-                                            textAlign: txt.textAlign as any,
-                                            letterSpacing: `${txt.letterSpacing}px`,
-                                            textShadow: txt.textShadow,
-                                            opacity: txt.opacity,
-                                            zIndex: item.zIndex,
-                                            WebkitTextStroke: txt.textStrokeWidth ? `${txt.textStrokeWidth}px ${txt.textStroke || '#000000'}` : undefined,
-                                        }}
+                                        style={textElementStyle(txt, n => `${n}px`, item.zIndex)}
                                         onMouseDown={txt.locked ? undefined : (e) => {
                                             e.stopPropagation();
                                             setSelectedTextId(txt.id);
