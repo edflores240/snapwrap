@@ -47,25 +47,34 @@ const getData = cache(async (username: string) => {
         .single();
     if (!profile) return null;
 
-    // Fetch active events and their latest published photo thumbnail in a single query
-    const { data: events } = await supabase
-        .from('events')
-        .select(`
-            id,
-            name,
-            slug,
-            date,
-            photos (
-                image_url
-            )
-        `)
-        .eq('user_id', profile.id)
-        .eq('is_active', true)
-        .eq('photos.is_published', true)
-        .order('created_at', { ascending: false, foreignTable: 'photos' })
-        .limit(1, { foreignTable: 'photos' })
-        .order('date', { ascending: false })
-        .limit(6);
+    // Fetch public, active events and their latest published photo thumbnail in a single query.
+    // Private ("only me") events never appear in the portfolio.
+    const eventsQuery = (onlyPublic: boolean) => {
+        let q = supabase
+            .from('events')
+            .select(`
+                id,
+                name,
+                slug,
+                date,
+                photos (
+                    image_url
+                )
+            `)
+            .eq('user_id', profile.id)
+            .eq('is_active', true);
+        if (onlyPublic) q = q.eq('visibility', 'public');
+        return q
+            .eq('photos.is_published', true)
+            .order('created_at', { ascending: false, foreignTable: 'photos' })
+            .limit(1, { foreignTable: 'photos' })
+            .order('date', { ascending: false })
+            .limit(6);
+    };
+
+    let { data: events, error: eventsError } = await eventsQuery(true);
+    // 42703: visibility column not migrated yet, so every event is still public
+    if (eventsError?.code === '42703') ({ data: events } = await eventsQuery(false));
 
     const portfolioItems = (events ?? []).map((event) => {
         const photos = event.photos as { image_url: string }[] | undefined;

@@ -6,7 +6,8 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { motion } from 'framer-motion';
-import { Calendar, Trash2 } from 'lucide-react';
+import { Calendar, Trash2, Eye, Lock } from 'lucide-react';
+import { deleteEventCompletely } from '@/lib/event-cleanup';
 import { Playfair_Display } from 'next/font/google';
 
 const playfair = Playfair_Display({ subsets: ['latin'] });
@@ -17,6 +18,7 @@ interface Event {
     slug: string;
     date: string;
     is_active: boolean;
+    visibility?: 'public' | 'private';
     created_at: string;
     boothSettings?: {
         themeColor?: string;
@@ -26,6 +28,7 @@ interface Event {
 export default function EventsPage() {
     const [events, setEvents] = useState<Event[]>([]);
     const [loading, setLoading] = useState(true);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
 
     useEffect(() => {
         fetchEvents();
@@ -36,14 +39,20 @@ export default function EventsPage() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            const { data, error } = await supabase
+            const query = (columns: string) => supabase
                 .from('events')
-                .select('id, name, slug, date, is_active, created_at, config->boothSettings')
+                .select(columns)
                 .eq('user_id', user.id)
                 .order('created_at', { ascending: false });
 
+            let { data, error } = await query('id, name, slug, date, is_active, visibility, created_at, config->boothSettings');
+            // 42703: visibility column not migrated yet, every event is public until it is
+            if (error?.code === '42703') {
+                ({ data, error } = await query('id, name, slug, date, is_active, created_at, config->boothSettings'));
+            }
+
             if (error) throw error;
-            if (data) setEvents(data as Event[]);
+            if (data) setEvents(data as unknown as Event[]);
         } catch (error) {
             console.error('Error fetching events:', error);
         } finally {
@@ -51,19 +60,36 @@ export default function EventsPage() {
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (!confirm('Are you sure you want to delete this event? This cannot be undone.')) return;
+    const handleDelete = async (event: Event) => {
+        const { count } = await supabase.from('photos').select('*', { count: 'exact', head: true }).eq('event_id', event.id);
+        const photos = count ?? 0;
+        const ok = confirm(
+            `Delete "${event.name}"?\n\n` +
+            `This permanently removes the event, its ${photos} photo${photos === 1 ? '' : 's'} (including stored files), ` +
+            `its templates and all its settings. This cannot be undone.`,
+        );
+        if (!ok) return;
 
+        setDeletingId(event.id);
         try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
-            const { error } = await supabase.from('events').delete().eq('id', id).eq('user_id', user.id);
-            if (error) throw error;
-            setEvents(events.filter(e => e.id !== id));
+            await deleteEventCompletely(event);
+            setEvents(prev => prev.filter(e => e.id !== event.id));
         } catch (error) {
             console.error('Error deleting event:', error);
-            alert('Failed to delete event');
+            alert(`Failed to delete event: ${error instanceof Error ? error.message : 'unknown error'}`);
+        } finally {
+            setDeletingId(null);
         }
+    };
+
+    const toggleVisibility = async (event: Event) => {
+        const next = event.visibility === 'private' ? 'public' : 'private';
+        const { error } = await supabase.from('events').update({ visibility: next }).eq('id', event.id);
+        if (error) {
+            alert(error.code === '42703' ? 'Run the latest database migration to enable event privacy.' : error.message);
+            return;
+        }
+        setEvents(prev => prev.map(e => (e.id === event.id ? { ...e, visibility: next } : e)));
     };
 
     return (
@@ -177,6 +203,19 @@ export default function EventsPage() {
                                                 >
                                                     {event.is_active ? 'Active' : 'Archived'}
                                                 </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => { e.preventDefault(); toggleVisibility(event); }}
+                                                    title={event.visibility === 'private' ? 'Only you — click to make public' : 'Public — click to make it only you'}
+                                                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-sm text-[8px] font-black uppercase tracking-[0.2em] border transition-colors ${
+                                                        event.visibility === 'private'
+                                                            ? 'bg-neutral-900 text-white border-neutral-900'
+                                                            : 'bg-white text-neutral-500 border-[#ECE8DF] hover:border-neutral-400'
+                                                    }`}
+                                                >
+                                                    {event.visibility === 'private' ? <Lock size={9} /> : <Eye size={9} />}
+                                                    {event.visibility === 'private' ? 'Only me' : 'Public'}
+                                                </button>
                                                 <div className="text-[10px] text-neutral-400 font-bold uppercase tracking-widest flex items-center gap-1">
                                                     <Calendar size={10} />
                                                     {new Date(event.date).toLocaleDateString(undefined, {
@@ -220,11 +259,14 @@ export default function EventsPage() {
                                                 <button
                                                     onClick={(e) => {
                                                         e.preventDefault();
-                                                        handleDelete(event.id);
+                                                        handleDelete(event);
                                                     }}
-                                                    className="text-neutral-300 hover:text-red-500 transition-colors p-2 hover:bg-red-50/60 rounded-lg"
+                                                    disabled={deletingId === event.id}
+                                                    className="text-neutral-300 hover:text-red-500 transition-colors p-2 hover:bg-red-50/60 rounded-lg disabled:opacity-40"
                                                 >
-                                                    <Trash2 size={18} />
+                                                    {deletingId === event.id
+                                                        ? <div className="w-[18px] h-[18px] border-2 border-neutral-300 border-t-red-500 rounded-full animate-spin" />
+                                                        : <Trash2 size={18} />}
                                                 </button>
                                             </div>
                                         </div>

@@ -11,6 +11,7 @@ const playfair = Playfair_Display({ subsets: ['latin'] });
 export default function NewEventPage() {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
+    const [visibility, setVisibility] = useState<'public' | 'private'>('public');
     const [formData, setFormData] = useState({
         name: '',
         slug: '',
@@ -35,19 +36,21 @@ export default function NewEventPage() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Not authenticated');
 
-            const { error } = await supabase
-                .from('events')
-                .insert([
-                    {
-                        name: formData.name,
-                        slug: formData.slug,
-                        date: formData.date,
-                        description: formData.description,
-                        is_active: true,
-                        config: {},
-                        user_id: user.id,
-                    }
-                ]);
+            const row = {
+                name: formData.name,
+                slug: formData.slug,
+                date: formData.date,
+                description: formData.description,
+                is_active: true,
+                config: {},
+                user_id: user.id,
+            };
+            let { error } = await supabase.from('events').insert([{ ...row, visibility }]);
+            if (error?.code === '42703' || error?.code === 'PGRST204') {
+                // visibility column not migrated yet: public events still work, private ones need the migration
+                if (visibility === 'private') throw new Error('Run the latest database migration to enable private events.');
+                ({ error } = await supabase.from('events').insert([row]));
+            }
 
             if (error) throw error;
 
@@ -128,6 +131,30 @@ export default function NewEventPage() {
                             className="w-full bg-white border border-[#ECE8DF] rounded-xl px-4 py-3 text-[#2A2724] focus:outline-none focus:border-[#2A2724] transition-all h-32 resize-none"
                             placeholder="Internal notes about this event..."
                         />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-bold text-[#2A2724] mb-2">
+                            Privacy
+                        </label>
+                        <div className="grid grid-cols-2 gap-3">
+                            {([
+                                ['public', 'Public', 'Shown in your portfolio on your public profile.'],
+                                ['private', 'Only me', 'Hidden from your portfolio. Guests with the booth or gallery link can still open it.'],
+                            ] as const).map(([value, title, hint]) => (
+                                <button
+                                    key={value}
+                                    type="button"
+                                    onClick={() => setVisibility(value)}
+                                    className={`text-left p-4 rounded-xl border-2 transition-all ${
+                                        visibility === value ? 'border-[#2A2724] bg-[#FAF8F5]' : 'border-[#ECE8DF] hover:border-neutral-300'
+                                    }`}
+                                >
+                                    <p className="text-sm font-black text-[#2A2724]">{title}</p>
+                                    <p className="text-xs text-neutral-500 mt-1 leading-snug">{hint}</p>
+                                </button>
+                            ))}
+                        </div>
                     </div>
 
                     <div className="flex gap-4 pt-4">

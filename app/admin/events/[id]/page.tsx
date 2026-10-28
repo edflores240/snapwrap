@@ -35,7 +35,9 @@ import {
     LayoutGrid,
     Columns,
     StretchHorizontal,
-    Tally4
+    Tally4,
+    Eye,
+    Lock
 } from 'lucide-react';
 import TemplateDesigner, { TemplateConfig } from '@/components/templates/TemplateDesigner';
 import PrintDesigner from '@/components/PrintDesigner';
@@ -51,6 +53,7 @@ interface Event {
     date: string;
     description: string;
     is_active: boolean;
+    visibility?: 'public' | 'private';
     config: any;
     created_at: string;
 }
@@ -322,6 +325,17 @@ export default function EventDetailPage() {
         }
     };
 
+    const handleToggleVisibility = async () => {
+        if (!event) return;
+        const next = event.visibility === 'private' ? 'public' : 'private';
+        const { error } = await supabase.from('events').update({ visibility: next }).eq('id', event.id);
+        if (error) {
+            alert(error.code === '42703' ? 'Run the latest database migration to enable event privacy.' : error.message);
+            return;
+        }
+        setEvent({ ...event, visibility: next });
+    };
+
     const handleSaveBoothSettings = async () => {
         if (!event) return;
         setSavingBooth(true);
@@ -539,6 +553,19 @@ export default function EventDetailPage() {
                             >
                                 {event.is_active ? 'Live' : 'Locked'}
                             </div>
+                            <button
+                                type="button"
+                                onClick={handleToggleVisibility}
+                                title={event.visibility === 'private' ? 'Only you — click to make public' : 'Public — click to make it only you'}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-[0.2em] border transition-colors ${
+                                    event.visibility === 'private'
+                                        ? 'bg-neutral-900 text-white border-neutral-900'
+                                        : 'bg-white text-neutral-500 border-[#ECE8DF] hover:border-neutral-400'
+                                }`}
+                            >
+                                {event.visibility === 'private' ? <Lock size={10} /> : <Eye size={10} />}
+                                {event.visibility === 'private' ? 'Only me' : 'Public'}
+                            </button>
                         </div>
                         <div className="flex items-center gap-8 text-[10px] font-bold text-neutral-400 uppercase tracking-widest">
                             <div className="flex items-center gap-2 border-r border-[#ECE8DF] pr-8">
