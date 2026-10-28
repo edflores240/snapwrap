@@ -72,6 +72,7 @@ export default function ProfilePage() {
     const [testimonials, setTestimonials] = useState<Testimonial[]>([]);
     const [submissions, setSubmissions] = useState<Submission[]>([]);
     const [approvingId, setApprovingId] = useState<string | null>(null);
+    const [loadingSubmissions, setLoadingSubmissions] = useState(true);
 
     useEffect(() => {
         if (!profile) return;
@@ -89,13 +90,20 @@ export default function ProfilePage() {
     }, [profile]);
 
     async function fetchSubmissions(profileId: string) {
-        const { data } = await supabase
-            .from('testimonial_submissions')
-            .select('id, author, role, company, text, rating, created_at')
-            .eq('profile_id', profileId)
-            .eq('status', 'pending')
-            .order('created_at', { ascending: false });
-        setSubmissions((data as Submission[]) ?? []);
+        setLoadingSubmissions(true);
+        try {
+            const { data } = await supabase
+                .from('testimonial_submissions')
+                .select('id, author, role, company, text, rating, created_at')
+                .eq('profile_id', profileId)
+                .eq('status', 'pending')
+                .order('created_at', { ascending: false });
+            setSubmissions((data as Submission[]) ?? []);
+        } catch (err) {
+            console.error('Failed to fetch submissions:', err);
+        } finally {
+            setLoadingSubmissions(false);
+        }
     }
 
     const handleLogoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -443,7 +451,34 @@ export default function ProfilePage() {
                     </button>
                 </div>
 
-                {submissions.length === 0 ? (
+                {loadingSubmissions ? (
+                    <div className="space-y-4">
+                        {[1, 2].map(n => (
+                            <Card key={n} className="p-6 border-[#ECE8DF] space-y-4 animate-pulse">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="space-y-2 flex-1">
+                                        <div className="h-4 bg-neutral-200 rounded-md w-1/4" />
+                                        <div className="h-3 bg-neutral-100 rounded-md w-1/3" />
+                                        <div className="flex gap-1 pt-1">
+                                            {[1, 2, 3, 4, 5].map(i => (
+                                                <div key={i} className="w-3 h-3 rounded-full bg-neutral-200" />
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="h-3 bg-neutral-200 rounded-md w-16" />
+                                </div>
+                                <div className="space-y-2">
+                                    <div className="h-3 bg-neutral-100 rounded-md w-full" />
+                                    <div className="h-3 bg-neutral-100 rounded-md w-5/6" />
+                                </div>
+                                <div className="flex gap-3 pt-2">
+                                    <div className="h-8 bg-neutral-200 rounded-lg w-20" />
+                                    <div className="h-8 bg-neutral-100 rounded-lg w-20" />
+                                </div>
+                            </Card>
+                        ))}
+                    </div>
+                ) : submissions.length === 0 ? (
                     <div className="p-10 text-center rounded-2xl bg-[#FAF8F5] border border-dashed border-[#ECE8DF]">
                         <p className="text-neutral-400 text-sm font-medium">No pending reviews. Share your review link with clients.</p>
                         <p className="text-neutral-300 text-xs mt-2 font-mono">/u/{profile.username}/review</p>

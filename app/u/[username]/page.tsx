@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { notFound } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import type { Profile, ServicePackage } from '@/lib/auth';
@@ -38,7 +39,7 @@ interface Props {
 
 type Layout = 'classic' | 'bold' | 'sidebar';
 
-async function getData(username: string) {
+const getData = cache(async (username: string) => {
     const { data: profile } = await supabase
         .from('profiles')
         .select('id, username, business_name, bio, logo_url, location, website, services, social_links, accent_color, dark_mode, profile_layout, custom_colors, testimonials, section_styles, custom_links, created_at')
@@ -46,28 +47,39 @@ async function getData(username: string) {
         .single();
     if (!profile) return null;
 
+    // Fetch active events and their latest published photo thumbnail in a single query
     const { data: events } = await supabase
         .from('events')
-        .select('id, name, slug, date')
+        .select(`
+            id,
+            name,
+            slug,
+            date,
+            photos (
+                image_url
+            )
+        `)
         .eq('user_id', profile.id)
         .eq('is_active', true)
+        .eq('photos.is_published', true)
+        .order('created_at', { ascending: false, foreignTable: 'photos' })
+        .limit(1, { foreignTable: 'photos' })
         .order('date', { ascending: false })
         .limit(6);
 
-    const portfolioItems = await Promise.all(
-        (events ?? []).map(async (event) => {
-            const { data: photos } = await supabase
-                .from('photos')
-                .select('image_url')
-                .eq('event_id', event.id)
-                .eq('is_published', true)
-                .order('created_at', { ascending: false })
-                .limit(1);
-            return { ...event, thumbnail: photos?.[0]?.image_url ?? null };
-        })
-    );
+    const portfolioItems = (events ?? []).map((event) => {
+        const photos = event.photos as { image_url: string }[] | undefined;
+        return {
+            id: event.id,
+            name: event.name,
+            slug: event.slug,
+            date: event.date,
+            thumbnail: photos?.[0]?.image_url ?? null
+        };
+    });
+
     return { profile: profile as Profile, portfolioItems };
-}
+});
 
 export async function generateMetadata({ params }: Props) {
     const { username } = await params;
