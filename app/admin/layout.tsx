@@ -6,7 +6,6 @@ import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import type { User } from '@supabase/supabase-js';
 import type { Profile } from '@/lib/auth';
-import { getPlanLabel } from '@/lib/plans';
 import { Inter, Playfair_Display } from 'next/font/google';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -18,7 +17,6 @@ import {
     ChevronRight,
     Camera,
     UserCircle,
-    CreditCard,
     Menu,
     X,
 } from 'lucide-react';
@@ -138,7 +136,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
         { name: 'Events', href: '/admin/events', icon: Calendar },
         { name: 'Profile', href: '/admin/profile', icon: UserCircle },
-        { name: 'Billing', href: '/admin/billing', icon: CreditCard },
     ];
 
     if (pathname.includes('/login')) {
@@ -194,19 +191,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 </nav>
             </div>
 
-            {/* Plan badge + user */}
+            {/* User */}
             <div className="p-4 space-y-2 border-t border-[#ECE8DF]">
-                {profile && (
-                    <div className="px-4 py-2 rounded-xl bg-white border border-[#ECE8DF] flex items-center justify-between">
-                        <div>
-                            <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Plan</p>
-                            <p className="text-xs font-bold text-neutral-700">{getPlanLabel(profile.subscription_status)}</p>
-                        </div>
-                        <Link href="/admin/billing" className="text-[10px] font-black text-indigo-500 uppercase tracking-widest hover:text-indigo-700">
-                            Upgrade
-                        </Link>
-                    </div>
-                )}
                 {profile && (
                     <div className="px-4 py-1">
                         <p className="text-[10px] font-bold text-neutral-400 truncate">{profile.business_name || profile.username}</p>

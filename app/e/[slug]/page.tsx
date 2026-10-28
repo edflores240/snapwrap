@@ -7,6 +7,10 @@ import { TemplateConfig, PRESET_TEMPLATES } from '@/components/templates/Templat
 import TemplatePreview from '@/components/templates/TemplatePreview';
 import PrintDesigner from '@/components/PrintDesigner';
 import QRCode from 'react-qr-code';
+import { enqueuePhoto, initUploadQueue, newPhotoId, useUploadQueue } from '@/lib/upload-queue';
+import { makeThumbnail } from '@/lib/image-utils';
+import { drawTextElement, loadTextFonts, textElementStyle } from '@/lib/template-text';
+import { drawSticker, drawTemplateBackground, overlayStyle, stickerBoxStyle, stickerImageStyle } from '@/lib/template-render';
 
 import {
     FlipHorizontal, Video, ZoomIn, ZoomOut,
@@ -109,6 +113,16 @@ export default function PublicBoothPage() {
     // QR / Upload state
     const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
     const [uploadingComposite, setUploadingComposite] = useState(false);
+    const uploadQueue = useUploadQueue();
+
+    // Resume any photos left in the queue from a previous session, and warn before closing with unsynced photos
+    useEffect(() => { initUploadQueue(); }, []);
+    useEffect(() => {
+        if (uploadQueue.pending === 0) return;
+        const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', warn);
+        return () => window.removeEventListener('beforeunload', warn);
+    }, [uploadQueue.pending]);
 
     // Camera
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -495,7 +509,7 @@ export default function PublicBoothPage() {
     // ── Generate Composite + Upload + QR ───────────────────────────────
 
     const handleConfirmAndGenerateQR = async () => {
-        const url = await generateAndSaveComposite();
+        const url = await queueDigitalCopy();
         if (url) {
             setDownloadUrl(url);
             setStep('qr');
@@ -512,45 +526,30 @@ export default function PublicBoothPage() {
 
 
 
-    const generateAndSaveComposite = async (existingDataUrl?: string) => {
+    /**
+     * Renders the digital copy and hands it to the background upload queue.
+     * The photo id is generated here, so the QR link is valid immediately —
+     * /download/[id] shows a "preparing" state until the queue finishes syncing.
+     */
+    const queueDigitalCopy = async () => {
         if (!selectedTemplate || !event) return null;
         setUploadingComposite(true);
 
+        let compositeDataUrl: string | null = null;
         try {
-            const compositeDataUrl = existingDataUrl || await generateComposite();
+            // Digital copies don't need print resolution: 3x @ 0.85 is ~4x smaller than 4x @ 0.95
+            compositeDataUrl = await generateComposite({ scale: 3, quality: 0.85 });
             if (!compositeDataUrl) throw new Error('Failed to generate composite');
 
-            const res = await fetch(compositeDataUrl);
-            const blob = await res.blob();
-            const fileName = `${event.slug}/${Date.now()}.jpg`;
+            const full = await (await fetch(compositeDataUrl)).blob();
+            const thumb = await makeThumbnail(full).catch(() => null);
+            const id = newPhotoId();
 
-            const { error: uploadError } = await supabase.storage
-                .from('booth-photos')
-                .upload(fileName, blob, { contentType: 'image/jpeg', upsert: false });
-
-            if (uploadError) {
-                console.error('Upload error:', uploadError);
-                handleFallbackDownload(compositeDataUrl);
-                return null;
-            }
-
-            const { data: urlData } = supabase.storage.from('booth-photos').getPublicUrl(fileName);
-            const publicUrl = urlData.publicUrl;
-
-            const { data: photoRecord, error: insertError } = await supabase
-                .from('photos')
-                .insert({ event_id: event.id, storage_path: fileName, image_url: publicUrl })
-                .select('id').single();
-
-            if (insertError) {
-                console.error('Insert error:', insertError);
-                handleFallbackDownload(compositeDataUrl);
-                return null;
-            }
-
-            return `${window.location.origin}/download/${photoRecord.id}`;
+            await enqueuePhoto({ id, eventId: event.id, eventSlug: event.slug, full, thumb });
+            return `${window.location.origin}/download/${id}`;
         } catch (err) {
-            console.error('Error in generateAndSaveComposite:', err);
+            console.error('Error queueing digital copy:', err);
+            if (compositeDataUrl) handleFallbackDownload(compositeDataUrl);
             return null;
         } finally {
             setUploadingComposite(false);
@@ -567,11 +566,14 @@ const handleFallbackDownload = (dataUrl: string) => {
         setStep('done');
     };
 
-    const generateComposite = async (): Promise<string | null> => {
+    const generateComposite = async (opts: { scale?: number; quality?: number } = {}): Promise<string | null> => {
         if (!selectedTemplate) { return null; }
 
+        // Canvas can't draw a web font that hasn't loaded yet; wait for the template's fonts first
+        await loadTextFonts(selectedTemplate.textElements || []);
+
         const compositeCanvas = document.createElement('canvas');
-        const SCALE = 4; // High resolution output
+        const SCALE = opts.scale ?? 4; // High resolution output (print default)
         const W = selectedTemplate.width * SCALE;
         const H = selectedTemplate.height * SCALE;
 
@@ -593,18 +595,11 @@ const handleFallbackDownload = (dataUrl: string) => {
 
         try {
             // ── 1. Background ────────────────────────────────────────────
+            let bgImage: HTMLImageElement | null = null;
             if (selectedTemplate.backgroundImage) {
-                try {
-                    const bg = await loadImage(selectedTemplate.backgroundImage);
-                    ctx.drawImage(bg, 0, 0, W, H);
-                } catch {
-                    ctx.fillStyle = selectedTemplate.background || '#ffffff';
-                    ctx.fillRect(0, 0, W, H);
-                }
-            } else {
-                ctx.fillStyle = selectedTemplate.background || '#ffffff';
-                ctx.fillRect(0, 0, W, H);
+                try { bgImage = await loadImage(selectedTemplate.backgroundImage); } catch { /* fall back to the colour */ }
             }
+            drawTemplateBackground(ctx, selectedTemplate, W, H, bgImage);
 
             // ── 2. Unified Z-Index Sorted Rendering ──────────────────────
             // Uses direct zIndex values from the template (same as TemplateVisualizer/TemplateDesigner)
@@ -717,18 +712,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                     const stk = item.data;
                     try {
                         const img = await loadImage(stk.src);
-                        const stkW = (stk.width / selectedTemplate.width) * W;
-                        const stkH = (img.height / img.width) * stkW;
-                        const stkX = (stk.x / 100) * W;
-                        const stkY = (stk.y / 100) * H;
-
-                        ctx.save();
-                        ctx.translate(stkX, stkY);
-                        ctx.rotate(((stk.rotation || 0) * Math.PI) / 180);
-                        ctx.scale(stk.flipX ? -1 : 1, stk.flipY ? -1 : 1);
-                        ctx.globalAlpha = stk.opacity ?? 1;
-                        ctx.drawImage(img, -stkW / 2, -stkH / 2, stkW, stkH);
-                        ctx.restore();
+                        drawSticker(ctx, img, stk, (stk.x / 100) * W, (stk.y / 100) * H, SCALE);
                     } catch (e) {
                         console.warn('Failed to load sticker:', stk.src, e);
                     }
@@ -790,33 +774,7 @@ const handleFallbackDownload = (dataUrl: string) => {
 
                 } else if (item.type === 'text') {
                     const txt = item.data;
-                    const txtX = (txt.x / 100) * W;
-                    const txtY = (txt.y / 100) * H;
-                    const fontSize = txt.fontSize * SCALE;
-
-                    ctx.save();
-                    ctx.translate(txtX, txtY);
-                    ctx.rotate(((txt.rotation || 0) * Math.PI) / 180);
-                    ctx.globalAlpha = txt.opacity ?? 1;
-                    ctx.font = `${txt.fontStyle || ''} ${txt.fontWeight || ''} ${fontSize}px ${txt.fontFamily || 'sans-serif'}`.trim();
-                    ctx.fillStyle = txt.color || '#000000';
-                    ctx.textAlign = (txt.textAlign as CanvasTextAlign) || 'center';
-                    ctx.textBaseline = 'middle';
-
-                    if (txt.letterSpacing) {
-                        // Manual letter spacing
-                        const chars = txt.text.split('');
-                        let xOffset = 0;
-                        const totalWidth = chars.reduce((acc: number, ch: string) => acc + ctx.measureText(ch).width + (txt.letterSpacing * SCALE), 0);
-                        let startX = txt.textAlign === 'center' ? -totalWidth / 2 : 0;
-                        chars.forEach((ch: string) => {
-                            ctx.fillText(ch, startX + xOffset, 0);
-                            xOffset += ctx.measureText(ch).width + (txt.letterSpacing * SCALE);
-                        });
-                    } else {
-                        ctx.fillText(txt.text, 0, 0);
-                    }
-                    ctx.restore();
+                    drawTextElement(ctx, txt, (txt.x / 100) * W, (txt.y / 100) * H, SCALE);
                 }
             }
 
@@ -841,7 +799,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                 ctx.fillText(selectedTemplate.watermarkText.toUpperCase(), W / 2, H - (10 * SCALE));
             }
 
-            return compositeCanvas.toDataURL('image/jpeg', 0.95);
+            return compositeCanvas.toDataURL('image/jpeg', opts.quality ?? 0.95);
         } catch (err) {
             console.error('Error in generateComposite:', err);
             return null;
@@ -1177,6 +1135,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                         backgroundPosition: 'center',
                                     }}
                                 />
+                                {overlayStyle(selectedTemplate) && <div style={overlayStyle(selectedTemplate)!} />}
 
                                 {/* Unified sorted render: slots, stickers, text, shapes in z-order */}
                                 {[
@@ -1239,16 +1198,8 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     if (item.type === 'sticker') {
                                         const stk = item.data;
                                         return (
-                                            <div key={stk.id} style={{
-                                                position: 'absolute',
-                                                left: `${stk.x}%`,
-                                                top: `${stk.y}%`,
-                                                width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
-                                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
-                                                zIndex: item.zIndex,
-                                                pointerEvents: 'none',
-                                            }}>
-                                                <img src={stk.src} className="w-full h-auto drop-shadow-md" />
+                                            <div key={stk.id} style={stickerBoxStyle(stk, n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`, item.zIndex)}>
+                                                <img src={stk.src} alt="" style={stickerImageStyle(stk)} draggable={false} />
                                             </div>
                                         );
                                     }
@@ -1286,21 +1237,15 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     if (item.type !== 'text') return null;
                                     const el = item.data;
                                     return (
-                                        <div key={el.id} style={{
-                                            position: 'absolute',
-                                            left: `${el.x}%`,
-                                            top: `${el.y}%`,
-                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                            color: el.color,
-                                            fontSize: `calc(${el.fontSize} / ${selectedTemplate.width} * 100cqw)`,
-                                            fontFamily: el.fontFamily,
-                                            fontWeight: el.fontWeight,
-                                            fontStyle: el.fontStyle,
-                                            width: 'max-content',
-                                            textShadow: el.textShadow,
-                                            zIndex: item.zIndex,
-                                            pointerEvents: 'none',
-                                        }}>{el.text}</div>
+                                        <div
+                                            key={el.id}
+                                            style={{
+                                                ...textElementStyle(el, n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`, item.zIndex),
+                                                pointerEvents: 'none',
+                                            }}
+                                        >
+                                            {el.text}
+                                        </div>
                                     );
                                 })}
 
@@ -1615,6 +1560,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     backgroundPosition: 'center',
                                 }}
                             />
+                                {overlayStyle(selectedTemplate) && <div style={overlayStyle(selectedTemplate)!} />}
 
                             {/* Unified sorted render: slots (draggable), stickers, text, shapes in z-order */}
                             <div className="absolute inset-0 w-full h-full"
@@ -1659,16 +1605,8 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     if (item.type === 'sticker') {
                                         const stk = item.data;
                                         return (
-                                            <div key={stk.id} style={{
-                                                position: 'absolute',
-                                                left: `${stk.x}%`,
-                                                top: `${stk.y}%`,
-                                                width: `calc(${stk.width} / ${selectedTemplate.width} * 100cqw)`,
-                                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
-                                                zIndex: item.zIndex,
-                                                pointerEvents: 'none',
-                                            }}>
-                                                <img src={stk.src} className="w-full h-auto drop-shadow-md" />
+                                            <div key={stk.id} style={stickerBoxStyle(stk, n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`, item.zIndex)}>
+                                                <img src={stk.src} alt="" style={stickerImageStyle(stk)} draggable={false} />
                                             </div>
                                         );
                                     }
@@ -1706,21 +1644,13 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     if (item.type !== 'text') return null;
                                     const el = item.data;
                                     return (
-                                        <div key={el.id} style={{
-                                            position: 'absolute',
-                                            left: `${el.x}%`,
-                                            top: `${el.y}%`,
-                                            transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                            color: el.color,
-                                            fontSize: `calc(${el.fontSize} / ${selectedTemplate.width} * 100cqw)`,
-                                            fontFamily: el.fontFamily,
-                                            fontWeight: el.fontWeight,
-                                            fontStyle: el.fontStyle,
-                                            width: 'max-content',
-                                            textShadow: el.textShadow,
-                                            zIndex: item.zIndex,
-                                            pointerEvents: 'none',
-                                        }}>
+                                        <div
+                                            key={el.id}
+                                            style={{
+                                                ...textElementStyle(el, n => `calc(${n} / ${selectedTemplate.width} * 100cqw)`, item.zIndex),
+                                                pointerEvents: 'none',
+                                            }}
+                                        >
                                             {el.text}
                                         </div>
                                     );
@@ -1766,6 +1696,19 @@ const handleFallbackDownload = (dataUrl: string) => {
 
 
                         </div>
+                    </div>
+                )}
+
+                {/* ── UPLOAD SYNC STATUS ───────────────────────────────── */}
+                {uploadQueue.pending > 0 && (
+                    <div
+                        className="fixed bottom-4 left-4 z-[250] flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold text-white border border-white/15"
+                        style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(10px)' }}
+                    >
+                        <span className={`w-2 h-2 rounded-full ${uploadQueue.status === 'syncing' ? 'bg-sky-400 animate-pulse' : 'bg-amber-400'}`} />
+                        {uploadQueue.status === 'syncing'
+                            ? `Syncing ${uploadQueue.pending} photo${uploadQueue.pending === 1 ? '' : 's'}…`
+                            : `${uploadQueue.pending} photo${uploadQueue.pending === 1 ? '' : 's'} waiting to sync${uploadQueue.status === 'offline' ? ' (offline)' : ''}`}
                     </div>
                 )}
 

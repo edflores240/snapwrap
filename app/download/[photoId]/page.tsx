@@ -22,30 +22,37 @@ export default function DownloadPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
     const [downloading, setDownloading] = useState(false);
+    // The booth hands out this link before the photo has finished uploading, so a missing row means "not synced yet"
+    const [waitingSince, setWaitingSince] = useState<number | null>(null);
 
     useEffect(() => {
-        fetchPhoto();
-    }, [params.photoId]);
+        let cancelled = false;
+        let timer: ReturnType<typeof setTimeout>;
 
-    const fetchPhoto = async () => {
-        try {
-            const { data, error } = await supabase
-                .from('photos')
-                .select('*, events(slug)')
-                .eq('id', params.photoId)
-                .single();
+        const poll = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('photos')
+                    .select('*, events(slug)')
+                    .eq('id', params.photoId)
+                    .maybeSingle();
 
-            if (error || !data) {
-                setError(true);
-                return;
+                if (cancelled) return;
+                // 22P02 = malformed id, so it will never exist
+                if (error?.code === '22P02') { setError(true); setLoading(false); return; }
+                if (data) { setPhoto(data); setWaitingSince(null); setLoading(false); return; }
+            } catch {
+                // network blip on the guest's phone: keep trying
             }
-            setPhoto(data);
-        } catch {
-            setError(true);
-        } finally {
+            if (cancelled) return;
+            setWaitingSince(prev => prev ?? Date.now());
             setLoading(false);
-        }
-    };
+            timer = setTimeout(poll, 4000);
+        };
+
+        poll();
+        return () => { cancelled = true; clearTimeout(timer); };
+    }, [params.photoId]);
 
     const handleDownload = async () => {
         if (!photo?.image_url) return;
@@ -75,6 +82,23 @@ export default function DownloadPage() {
                 <div className="text-center">
                     <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
                     <p className="text-gray-400">Loading your photo...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!error && !photo && waitingSince) {
+        const longWait = Date.now() - waitingSince > 120_000;
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white">
+                <div className="text-center max-w-md px-6">
+                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                    <h1 className="text-2xl font-bold mb-2">Preparing your photo…</h1>
+                    <p className="text-gray-400">
+                        {longWait
+                            ? 'This is taking longer than usual. Keep this page open — it will update as soon as your photo arrives.'
+                            : 'Hang tight, this page will update automatically.'}
+                    </p>
                 </div>
             </div>
         );

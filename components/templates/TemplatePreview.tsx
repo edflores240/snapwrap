@@ -2,6 +2,8 @@
 
 import React from 'react';
 import { TemplateConfig } from './TemplateDesigner';
+import { textElementStyle } from '@/lib/template-text';
+import { stickerBoxStyle, stickerImageStyle } from '@/lib/template-render';
 
 interface TemplatePreviewProps {
     template: TemplateConfig;
@@ -96,32 +98,15 @@ export default function TemplatePreview({
                 <>
                     {/* Text elements */}
                     {tpl.textElements.map((el) => (
-                        <div key={el.id} className="absolute whitespace-nowrap pointer-events-none"
-                            style={{
-                                left: `${el.x}%`, top: `${el.y}%`,
-                                transform: `translate(-50%, -50%) rotate(${el.rotation}deg)`,
-                                fontSize: Math.max(el.fontSize * scale, 6),
-                                fontFamily: el.fontFamily, color: el.color,
-                                fontWeight: el.fontWeight, fontStyle: el.fontStyle,
-                                letterSpacing: el.letterSpacing * scale, textShadow: el.textShadow,
-                                opacity: el.opacity, lineHeight: 1.2,
-                            }}
-                        >
+                        <div key={el.id} className="pointer-events-none" style={textElementStyle(el, n => `${n * scale}px`)}>
                             {el.text}
                         </div>
                     ))}
 
                     {/* Stickers */}
                     {(tpl.stickers || []).map((stk) => (
-                        <div key={stk.id} className="absolute pointer-events-none"
-                            style={{
-                                left: `${stk.x}%`, top: `${stk.y}%`,
-                                width: stk.width * scale,
-                                transform: `translate(-50%, -50%) rotate(${stk.rotation}deg)`,
-                                zIndex: 15,
-                            }}
-                        >
-                            <img src={stk.src} alt="sticker" className="w-full h-auto drop-shadow-md" />
+                        <div key={stk.id} style={stickerBoxStyle(stk, n => `${n * scale}px`, 15)}>
+                            <img src={stk.src} alt="" style={stickerImageStyle(stk)} />
                         </div>
                     ))}
 
