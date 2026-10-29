@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Archive, Camera, Check, Download, Heart, Loader2, SlidersHorizontal, X } from 'lucide-react';
+import { Archive, Camera, Check, Download, Heart, Images, Loader2, SlidersHorizontal, X } from 'lucide-react';
 import { getAlbum, getVisitorId, readGuestConfig, toggleLike, type AlbumPhoto, type AlbumResult } from '@/lib/guest-camera';
 import { contrastOn, resolveEventTheme } from '@/lib/event-theme';
 import { eventBodyClass, eventTitleClass, eventTitleSize, caveat } from '@/lib/gallery-typography';
@@ -199,6 +199,13 @@ export default function AlbumClient({ event }: { event: GuestEvent }) {
                         {total.toLocaleString()} {total === 1 ? 'moment' : 'moments'} from the guests{hearts > 0 ? ` · ${hearts.toLocaleString()} ♥` : ''}
                     </p>
                     <p className={`${caveat.className} text-2xl mt-3 opacity-80 -rotate-2`}>{pp.handwrittenNote || 'Made by the people you love'}</p>
+                    <Link
+                        href={`/e/${event.slug}/gallery`}
+                        className="mt-7 inline-flex items-center gap-2 px-6 py-3 rounded-full text-xs font-bold uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
+                        style={{ border: `2px solid ${primary}`, color: primary }}
+                    >
+                        <Images size={15} /> See the gallery
+                    </Link>
                 </header>
 
                 {/* Most loved */}

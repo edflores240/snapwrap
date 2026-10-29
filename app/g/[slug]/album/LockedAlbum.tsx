@@ -165,6 +165,11 @@ export default function LockedAlbum({ title, primary, secondary, config, slug, r
                     >
                         <Camera size={14} /> Back to your shots
                     </Link>
+                    <div className="mt-3">
+                        <Link href={`/e/${slug}/gallery`} className="text-xs font-bold uppercase tracking-widest opacity-60 hover:opacity-100 transition-opacity underline underline-offset-4">
+                            See the gallery
+                        </Link>
+                    </div>
                 </motion.section>
             </div>
         </main>
