@@ -25,6 +25,8 @@ export interface GuestConfig {
     filtersEnabled: boolean;
     prompts: string[];
     slideshowLive: boolean;
+    /** Blurred previews of the photos on the locked album screen */
+    showTeaser: boolean;
     welcomeTitle: string;
     welcomeMessage: string;
     thankYouMessage: string;
@@ -44,6 +46,7 @@ export const DEFAULT_GUEST_CONFIG: GuestConfig = {
     filtersEnabled: true,
     prompts: [],
     slideshowLive: false,
+    showTeaser: true,
     welcomeTitle: '',
     welcomeMessage: '',
     thankYouMessage: '',
@@ -121,6 +124,8 @@ export interface AlbumResult {
     revealAt?: string | null;
     now?: string;
     total?: number;
+    /** ~24px data-URL previews, only sent while the album is locked */
+    teaser?: string[];
     photos?: AlbumPhoto[];
     facets?: { guests: { id: string; name: string; count: number }[]; prompts: string[] };
 }
@@ -343,7 +348,7 @@ function paintFinish(ctx: CanvasRenderingContext2D, w: number, h: number, flt: G
     }
 }
 
-export interface CapturedShot { full: Blob; thumb: Blob; previewUrl: string }
+export interface CapturedShot { full: Blob; thumb: Blob; previewUrl: string; /** tiny data URL for the locked-album teaser */ preview: string }
 
 /**
  * Draws the part of `source` that matches `frameRatio` (width / height) at no more than 1600px,
@@ -382,7 +387,14 @@ export async function renderShot(
     small.width = Math.round(w * ratio); small.height = Math.round(h * ratio);
     small.getContext('2d')!.drawImage(canvas, 0, 0, small.width, small.height);
     const thumb = await toBlob(small, 0.75);
-    return { full, thumb, previewUrl: URL.createObjectURL(full) };
+
+    // A ~24px version (a few hundred bytes) is all the locked album ever shows, blurred further
+    const tiny = document.createElement('canvas');
+    tiny.width = 24; tiny.height = Math.max(1, Math.round(24 * (h / w)));
+    tiny.getContext('2d')!.drawImage(canvas, 0, 0, tiny.width, tiny.height);
+    const preview = tiny.toDataURL('image/jpeg', 0.5);
+
+    return { full, thumb, previewUrl: URL.createObjectURL(full), preview };
 }
 
 /** A photo from the guest's library, scaled down like a camera shot */

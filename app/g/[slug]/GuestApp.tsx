@@ -183,7 +183,7 @@ export default function GuestApp({ event }: { event: GuestEvent }) {
             eventSlug: event.slug,
             full: shot.full,
             thumb: shot.thumb,
-            guest: { sessionId: identity.sessionId, caption: caption.trim() || null, prompt },
+            guest: { sessionId: identity.sessionId, caption: caption.trim() || null, prompt, preview: shot.preview },
         });
         await refreshPhotos(identity.sessionId);
     };

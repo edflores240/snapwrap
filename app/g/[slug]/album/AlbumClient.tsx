@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { Heart, Download, X, ChevronLeft, ChevronRight, Loader2, Camera, Archive } from 'lucide-react';
-import { countdownParts, getAlbum, getVisitorId, readGuestConfig, toggleLike, type AlbumPhoto, type AlbumResult } from '@/lib/guest-camera';
+import { Heart, Download, X, ChevronLeft, ChevronRight, Loader2, Archive } from 'lucide-react';
+import { getAlbum, getVisitorId, readGuestConfig, toggleLike, type AlbumPhoto, type AlbumResult } from '@/lib/guest-camera';
 import type { GuestEvent } from '../GuestApp';
+import LockedAlbum from './LockedAlbum';
 
 const PAGE = 36;
 const SERIF = '"Playfair Display", Georgia, serif';
@@ -161,24 +161,17 @@ export default function AlbumClient({ event }: { event: GuestEvent }) {
     if (!first?.enabled) return frame(<p className="text-center text-sm opacity-70">This album isn&apos;t available.</p>);
 
     if (!first.revealed) {
-        const p = revealAtMs ? countdownParts(revealAtMs - now) : null;
-        return frame(
-            <div className="max-w-md mx-auto rounded-3xl bg-white/80 border border-black/5 p-8 text-center space-y-6 shadow-sm">
-                <p className="text-sm opacity-70">The photos are a surprise. The album opens {revealAtMs ? 'in' : 'when the host shares it'}.</p>
-                {p && (
-                    <div className="flex justify-center gap-3">
-                        {[...(p.days > 0 ? [{ v: p.days, l: 'days' }] : []), { v: p.hours, l: 'hrs' }, { v: p.minutes, l: 'min' }, { v: p.seconds, l: 'sec' }].map(c => (
-                            <div key={c.l} className="min-w-[64px] rounded-2xl bg-white border border-black/5 py-3">
-                                <div className="text-3xl font-black tabular-nums" style={{ fontFamily: SERIF }}>{String(c.v).padStart(2, '0')}</div>
-                                <div className="text-[10px] font-bold uppercase tracking-widest opacity-50">{c.l}</div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-                <Link href={`/g/${event.slug}`} className="inline-flex items-center gap-2 text-sm font-bold" style={{ color: accent }}>
-                    <Camera size={16} /> Back to your shots
-                </Link>
-            </div>
+        return (
+            <LockedAlbum
+                title={cfg.welcomeTitle || event.name}
+                accent={accent}
+                slug={event.slug}
+                revealAtMs={revealAtMs}
+                now={now}
+                total={first.total ?? 0}
+                teaser={first.teaser ?? []}
+                unlocking={!!revealAtMs && now >= revealAtMs}
+            />
         );
     }
 

@@ -24,7 +24,7 @@ export interface QueuedPhoto {
     full: Blob;
     thumb: Blob | null;
     /** Set for photos from the guest camera: they are saved through the guest_add_photo function */
-    guest?: { sessionId: string; caption: string | null; prompt: string | null };
+    guest?: { sessionId: string; caption: string | null; prompt: string | null; preview?: string | null };
 }
 
 interface StoredPhoto extends QueuedPhoto {
@@ -121,7 +121,7 @@ async function uploadGuestItem(item: StoredPhoto & Required<Pick<StoredPhoto, 'g
     const storagePath = `${item.eventSlug}/guest/${item.id}.jpg`;
     const imageUrl = await uploadFile(storagePath, item.full);
     const thumbUrl = item.thumb ? await uploadFile(`${item.eventSlug}/guest/thumbs/${item.id}.jpg`, item.thumb) : null;
-    const { error } = await supabase.rpc('guest_add_photo', {
+    const args = {
         p_event_id: item.eventId,
         p_session_id: item.guest.sessionId,
         p_photo_id: item.id,
@@ -130,7 +130,10 @@ async function uploadGuestItem(item: StoredPhoto & Required<Pick<StoredPhoto, 'g
         p_storage_path: storagePath,
         p_caption: item.guest.caption,
         p_prompt: item.guest.prompt,
-    });
+    };
+    let { error } = await supabase.rpc('guest_add_photo', { ...args, p_preview: item.guest.preview ?? null });
+    // PGRST202: the 20260530000000_guest_preview migration isn't applied yet; save the photo without its preview
+    if (error && error.code === 'PGRST202') ({ error } = await supabase.rpc('guest_add_photo', args));
     if (error) {
         // The server will never take this photo (no shots left, camera closed...): clean up the files we just sent
         if (PERMANENT_GUEST_ERRORS.includes(error.message)) {

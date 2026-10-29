@@ -331,6 +331,7 @@ export default function GuestCameraAdmin({ event, accent, printTemplates, onConf
                             <Toggle on={cfg.captionsEnabled} onChange={v => patch({ captionsEnabled: v })} accent={accent} title="Allow captions" />
                             <Toggle on={cfg.filtersEnabled} onChange={v => patch({ filtersEnabled: v })} accent={accent} title="Film filters" hint="Disposable, vintage, B&W and vivid looks." />
                             <Toggle on={cfg.allowLibrary} onChange={v => patch({ allowLibrary: v })} accent={accent} title="Allow photos from the library" hint="Off keeps the disposable-camera feel: only live shots." />
+                            <Toggle on={cfg.showTeaser} onChange={v => patch({ showTeaser: v })} accent={accent} title="Blurred teaser on the locked album" hint="Guests see a heavily blurred glimpse while they wait. Only tiny previews are shared, never the real photos." />
                             <Toggle on={cfg.slideshowLive} onChange={v => patch({ slideshowLive: v })} accent={accent} title="Live slideshow" hint="Approved photos can appear on a projector before the reveal." />
                         </div>
                     </div>
