@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { supabase } from './supabase';
+import { PERMANENT_GUEST_ERRORS } from './guest-camera';
 
 /**
  * Background upload queue for booth photos.
@@ -22,6 +23,8 @@ export interface QueuedPhoto {
     eventSlug: string;
     full: Blob;
     thumb: Blob | null;
+    /** Set for photos from the guest camera: they are saved through the guest_add_photo function */
+    guest?: { sessionId: string; caption: string | null; prompt: string | null };
 }
 
 interface StoredPhoto extends QueuedPhoto {
@@ -35,6 +38,7 @@ const memoryStore = new Map<string, StoredPhoto>();
 const nextAttemptAt = new Map<string, number>();
 const attempts = new Map<string, number>();
 const listeners = new Set<() => void>();
+const rejectionListeners = new Set<(photoId: string, code: string) => void>();
 
 let snapshot: QueueSnapshot = { pending: 0, status: 'idle' };
 let running = false;
@@ -113,7 +117,31 @@ async function uploadFile(path: string, blob: Blob) {
     return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
+async function uploadGuestItem(item: StoredPhoto & Required<Pick<StoredPhoto, 'guest'>>) {
+    const storagePath = `${item.eventSlug}/guest/${item.id}.jpg`;
+    const imageUrl = await uploadFile(storagePath, item.full);
+    const thumbUrl = item.thumb ? await uploadFile(`${item.eventSlug}/guest/thumbs/${item.id}.jpg`, item.thumb) : null;
+    const { error } = await supabase.rpc('guest_add_photo', {
+        p_event_id: item.eventId,
+        p_session_id: item.guest.sessionId,
+        p_photo_id: item.id,
+        p_image_url: imageUrl,
+        p_thumb_url: thumbUrl,
+        p_storage_path: storagePath,
+        p_caption: item.guest.caption,
+        p_prompt: item.guest.prompt,
+    });
+    if (error) {
+        // The server will never take this photo (no shots left, camera closed...): clean up the files we just sent
+        if (PERMANENT_GUEST_ERRORS.includes(error.message)) {
+            await supabase.storage.from(BUCKET).remove([storagePath, `${item.eventSlug}/guest/thumbs/${item.id}.jpg`]).catch(() => undefined);
+        }
+        throw error;
+    }
+}
+
 async function uploadItem(item: StoredPhoto) {
+    if (item.guest) return uploadGuestItem({ ...item, guest: item.guest });
     const imageUrl = await uploadFile(`${item.eventSlug}/${item.id}.jpg`, item.full);
     const thumbUrl = item.thumb ? await uploadFile(`${item.eventSlug}/thumbs/${item.id}.jpg`, item.thumb) : null;
 
@@ -162,6 +190,13 @@ async function processQueue() {
                 await uploadItem(due);
                 await deleteItem(due.id);
             } catch (err) {
+                const message = (err as { message?: string }).message ?? '';
+                if (due.guest && PERMANENT_GUEST_ERRORS.includes(message)) {
+                    // Retrying can't help; drop it and tell the guest page
+                    await deleteItem(due.id);
+                    rejectionListeners.forEach(l => l(due.id, message));
+                    continue;
+                }
                 const n = (attempts.get(due.id) ?? 0) + 1;
                 attempts.set(due.id, n);
                 nextAttemptAt.set(due.id, Date.now() + Math.min(60_000, 2_000 * 2 ** n));
@@ -199,6 +234,23 @@ export async function enqueuePhoto(photo: QueuedPhoto) {
     await putItem({ ...photo, createdAt: Date.now() });
     await refreshPending('syncing');
     void processQueue();
+}
+
+/** Photos still waiting to upload for an event (shown to guests as "uploading") */
+export async function listQueuedPhotos(eventId: string): Promise<QueuedPhoto[]> {
+    return (await allItems()).filter(i => i.eventId === eventId);
+}
+
+/** Cancels a photo that hasn't uploaded yet */
+export async function removeQueuedPhoto(id: string) {
+    await deleteItem(id);
+    await refreshPending();
+}
+
+/** Called when the server refuses a queued guest photo for good */
+export function onPhotoRejected(cb: (photoId: string, code: string) => void) {
+    rejectionListeners.add(cb);
+    return () => { rejectionListeners.delete(cb); };
 }
 
 /** Resumes photos persisted by earlier sessions and wires up reconnect handling. Safe to call repeatedly. */

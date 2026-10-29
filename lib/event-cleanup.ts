@@ -30,6 +30,9 @@ export async function deleteEventCompletely(event: { id: string; slug: string })
     const paths = new Set<string>([
         ...(await listFolder(event.slug)),
         ...(await listFolder(`${event.slug}/thumbs`)),
+        // Guest camera photos and their thumbnails
+        ...(await listFolder(`${event.slug}/guest`)),
+        ...(await listFolder(`${event.slug}/guest/thumbs`)),
     ]);
 
     // Also anything the rows point at, in case a file was stored outside the usual folder

@@ -22,6 +22,7 @@ import {
     Clock, 
     Trash2, 
     Copy,
+    Camera,
     Plus,
     Download,
     Palette,
@@ -41,6 +42,7 @@ import {
     Lock
 } from 'lucide-react';
 import TemplateDesigner, { TemplateConfig } from '@/components/templates/TemplateDesigner';
+import GuestCameraAdmin from '@/components/admin/GuestCameraAdmin';
 import PrintDesigner from '@/components/PrintDesigner';
 import GalleryPreview from '@/components/admin/GalleryPreview';
 import Segmented from '@/components/admin/Segmented';
@@ -175,7 +177,7 @@ export default function EventDetailPage() {
     const [event, setEvent] = useState<Event | null>(null);
     const [loading, setLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const [activeTab, setActiveTab] = useState<'overview' | 'templates' | 'booth' | 'gallery' | 'gallery-config'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'templates' | 'booth' | 'gallery' | 'gallery-config' | 'guest'>('overview');
 
     // Booth customization state
     const [boothSettings, setBoothSettings] = useState({
@@ -325,13 +327,16 @@ export default function EventDetailPage() {
         if (!params.id) return;
         setLoadingPhotos(true);
         try {
-            const { data, error } = await supabase
+            const boothQuery = () => supabase
                 .from('photos')
                 .select('id, created_at, image_url, thumb_url, is_published')
                 .eq('event_id', params.id as string)
                 .order('created_at', { ascending: false })
                 .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
+            // Guest camera photos have their own tab; before that migration the column doesn't exist
+            let { data, error } = await boothQuery().is('guest_session_id', null);
+            if (error && (error.code === '42703' || error.code === 'PGRST204')) ({ data, error } = await boothQuery());
             if (error) throw error;
 
             setBoothPhotos(prev => reset ? (data ?? []) : [...prev, ...(data ?? [])]);
@@ -530,6 +535,7 @@ export default function EventDetailPage() {
     const tabs = [
         { id: 'overview', label: 'Overview', icon: Layout },
         { id: 'gallery', label: 'Media', icon: ImageIcon },
+        { id: 'guest', label: 'Guest Camera', icon: Camera },
         { id: 'gallery-config', label: 'Gallery Config', icon: Globe },
         { id: 'templates', label: 'Templates', icon: Settings },
         { id: 'booth', label: 'Booth Config', icon: Palette },
@@ -1183,6 +1189,30 @@ export default function EventDetailPage() {
                             <GalleryPreview slug={event.slug} settings={gallerySettings} />
                         </motion.div>
                     )}
+                    {activeTab === 'guest' && (
+                        <motion.div
+                            key="guest"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                        >
+                            <GuestCameraAdmin
+                                event={{ id: event.id, name: event.name, slug: event.slug, config: event.config }}
+                                accent={boothSettings.themeColor}
+                                printTemplates={templates.map(t => ({
+                                    id: t.id,
+                                    name: t.name,
+                                    preview: t.backgroundImage || '',
+                                    layout: t.layout,
+                                    gap: t.gap,
+                                    padding: t.padding,
+                                    background: t.background
+                                }))}
+                                onConfigSaved={(config) => setEvent(prev => (prev ? { ...prev, config } : prev))}
+                            />
+                        </motion.div>
+                    )}
+
                     {activeTab === 'templates' && (
                         <motion.div 
                             key="templates"
