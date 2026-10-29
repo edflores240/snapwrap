@@ -402,7 +402,7 @@ export default function GuestApp({ event }: { event: GuestEvent }) {
             />
 
             {confirmDelete && (
-                <div className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-4" onClick={() => setConfirmDelete(null)}>
+                <div className="fixed inset-0 z-[400] bg-black/50 flex items-end sm:items-center justify-center p-4" onClick={() => setConfirmDelete(null)}>
                     <div className="w-full max-w-sm rounded-3xl p-6 space-y-4" style={{ background: theme.secondary, color: theme.primary }} onClick={e => e.stopPropagation()}>
                         <h3 className="text-lg font-bold">Delete this photo?</h3>
                         <p className="text-sm opacity-60">You&apos;ll get the shot back so you can take it again.</p>
