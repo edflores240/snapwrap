@@ -43,6 +43,9 @@ import {
 } from 'lucide-react';
 import TemplateDesigner, { TemplateConfig } from '@/components/templates/TemplateDesigner';
 import GuestCameraAdmin from '@/components/admin/GuestCameraAdmin';
+import ColorSchemeBar from '@/components/admin/ColorSchemeBar';
+import { applyColorScheme, resolveEventTheme, type ColorScheme } from '@/lib/event-theme';
+import ImageViewer, { viewerButton, viewerButtonPrimary } from '@/components/ui/ImageViewer';
 import { applyReplacements, externalizeDataUrls, hasDataUrls, uploadDataUrls } from '@/lib/config-assets';
 import PrintDesigner from '@/components/PrintDesigner';
 import GalleryPreview from '@/components/admin/GalleryPreview';
@@ -260,7 +263,7 @@ export default function EventDetailPage() {
     });
 
     // Fullscreen Preview state
-    const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+    const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
     // Download state
     const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -284,6 +287,19 @@ export default function EventDetailPage() {
             fetchPhotos(0, true);
         }
     }, [activeTab]);
+
+    // One colour scheme for every page of the event
+    const eventTheme = resolveEventTheme(event?.config);
+    const applyScheme = async (scheme: ColorScheme) => {
+        if (!event) return;
+        const config = applyColorScheme(event.config, scheme);
+        const { error } = await supabase.from('events').update({ config }).eq('id', event.id);
+        if (error) { console.error('Saving the colour scheme failed:', error.message); throw error; }
+        setEvent({ ...event, config });
+        // Keep the editors' own copies in step, so saving them later doesn't put the old colours back
+        setGallerySettings(prev => ({ ...prev, primaryColor: scheme.primary, secondaryColor: scheme.secondary }));
+        setBoothSettings(prev => ({ ...prev, themeColor: scheme.primary }));
+    };
 
     // Older events keep template images inside the event row (megabytes); move them to storage once
     const [optimizing, setOptimizing] = useState(false);
@@ -333,10 +349,16 @@ export default function EventDetailPage() {
             if (hasDataUrls(data.config)) void optimizeConfig(data);
             if (data.config?.templates) setTemplates(data.config.templates);
             if (data.config?.boothSettings) setBoothSettings(prev => ({ ...prev, ...data.config.boothSettings }));
+            if (data.config?.colorScheme) {
+                const cs = data.config.colorScheme;
+                setBoothSettings(prev => ({ ...prev, themeColor: cs.primary }));
+            }
             if (data.config?.publicPage) {
                 const saved = { ...data.config.publicPage };
                 // Old events stored black/white as a placeholder; show the colours the page really renders
-                const colors = resolveGalleryColors(saved.themeStyle || 'modern', saved.primaryColor, saved.secondaryColor);
+                const colors = data.config?.colorScheme
+                    ? { primary: data.config.colorScheme.primary, secondary: data.config.colorScheme.secondary }
+                    : resolveGalleryColors(saved.themeStyle || 'modern', saved.primaryColor, saved.secondaryColor);
                 setGallerySettings(prev => ({ ...prev, ...saved, primaryColor: colors.primary, secondaryColor: colors.secondary }));
             }
 
@@ -662,6 +684,8 @@ export default function EventDetailPage() {
                 </div>
             </header>
 
+            <ColorSchemeBar scheme={{ preset: eventTheme.preset, primary: eventTheme.primary, secondary: eventTheme.secondary }} onApply={applyScheme} />
+
             {optimizing && (
                 <div className="rounded-2xl border border-[#ECE8DF] bg-white px-5 py-3 text-xs font-bold text-neutral-500 flex items-center gap-3">
                     <RefreshCw size={14} className="animate-spin" /> Making this event faster: moving template images to storage. This only happens once.
@@ -814,7 +838,7 @@ export default function EventDetailPage() {
                                         {/* Minimal Hover Controls */}
                                         <div 
                                             className="absolute inset-0 bg-neutral-900/60 opacity-0 group-hover:opacity-100 transition-all duration-300 backdrop-blur-[2px] flex flex-col justify-between p-4 cursor-zoom-in"
-                                            onClick={() => setPreviewPhoto(photo.image_url)}
+                                            onClick={() => setPreviewIndex(i)}
                                             title="Click to preview"
                                         >
                                             <div className="flex justify-end">
@@ -913,16 +937,11 @@ export default function EventDetailPage() {
                                             </div>
                                         </div>
  
-                                        <div className="space-y-3">
+                                        <div className="space-y-2">
                                             <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Branding Tint</label>
-                                            <div className="flex items-center gap-4 p-1 bg-[#FAF8F5] rounded-lg border border-[#ECE8DF]">
-                                                <input
-                                                    type="color"
-                                                    value={boothSettings.themeColor}
-                                                    onChange={(e) => setBoothSettings({ ...boothSettings, themeColor: e.target.value })}
-                                                    className="w-10 h-10 rounded-md cursor-pointer border-0 bg-transparent"
-                                                />
-                                                <span className="text-[10px] font-mono font-black text-[#2A2724] uppercase">{boothSettings.themeColor}</span>
+                                            <div className="flex items-center gap-4 p-3 bg-[#FAF8F5] rounded-lg border border-[#ECE8DF]">
+                                                <span className="w-10 h-10 rounded-md border border-black/10" style={{ background: boothSettings.themeColor }} />
+                                                <p className="text-[11px] text-neutral-500 leading-relaxed">Follows the event&apos;s color scheme. Change it in the <b>Color scheme</b> panel at the top of the page.</p>
                                             </div>
                                         </div>
                                     </div>
@@ -964,23 +983,12 @@ export default function EventDetailPage() {
                                 <div className="space-y-12">
                                     <div className="space-y-8">
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Visual Theme</label>
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Design Style</label>
                                             <div className="grid grid-cols-2 gap-4">
                                                 {GALLERY_THEME_KEYS.map(t => (
                                                     <button 
                                                         key={t}
-                                                        onClick={() => {
-                                                            // Carry the new theme's palette over unless the colours were customised
-                                                            const prev = THEME_PALETTES[gallerySettings.themeStyle];
-                                                            const customised = !prev
-                                                                || prev.primary.toLowerCase() !== gallerySettings.primaryColor.toLowerCase()
-                                                                || prev.secondary.toLowerCase() !== gallerySettings.secondaryColor.toLowerCase();
-                                                            setGallerySettings({
-                                                                ...gallerySettings,
-                                                                themeStyle: t,
-                                                                ...(customised ? {} : { primaryColor: THEME_PALETTES[t].primary, secondaryColor: THEME_PALETTES[t].secondary }),
-                                                            });
-                                                        }}
+                                                        onClick={() => setGallerySettings({ ...gallerySettings, themeStyle: t })}
                                                         className={`p-4 rounded-xl border-2 transition-all text-left group ${
                                                             gallerySettings.themeStyle === t 
                                                             ? 'border-[#2A2724] bg-[#2A2724] text-white shadow-sm scale-[1.02]' 
@@ -1019,46 +1027,14 @@ export default function EventDetailPage() {
                                             </div>
                                         </div>
 
-                                        <div className="space-y-3">
-                                            <div className="flex items-center justify-between">
-                                                <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Color Strategy</label>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setGallerySettings({
-                                                        ...gallerySettings,
-                                                        primaryColor: THEME_PALETTES[gallerySettings.themeStyle].primary,
-                                                        secondaryColor: THEME_PALETTES[gallerySettings.themeStyle].secondary,
-                                                    })}
-                                                    className="text-[8px] font-bold text-neutral-400 hover:text-[#2A2724] uppercase tracking-widest transition-colors"
-                                                >
-                                                    Reset to theme
-                                                </button>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-4 p-4 bg-[#FAF8F5] rounded-xl border border-[#ECE8DF]">
-                                                <div className="space-y-2">
-                                                    <label className="text-[8px] font-bold text-neutral-400 uppercase">Primary · text &amp; accents</label>
-                                                    <div className="flex items-center gap-3">
-                                                        <input
-                                                            type="color"
-                                                            value={gallerySettings.primaryColor}
-                                                            onChange={(e) => setGallerySettings({ ...gallerySettings, primaryColor: e.target.value })}
-                                                            className="w-10 h-10 rounded-lg cursor-pointer border-0 bg-transparent"
-                                                        />
-                                                        <span className="text-[10px] font-mono font-black text-[#2A2724] uppercase">{gallerySettings.primaryColor}</span>
-                                                    </div>
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <label className="text-[8px] font-bold text-neutral-400 uppercase">Secondary · background</label>
-                                                    <div className="flex items-center gap-3">
-                                                        <input
-                                                            type="color"
-                                                            value={gallerySettings.secondaryColor}
-                                                            onChange={(e) => setGallerySettings({ ...gallerySettings, secondaryColor: e.target.value })}
-                                                            className="w-10 h-10 rounded-lg cursor-pointer border-0 bg-transparent"
-                                                        />
-                                                        <span className="text-[10px] font-mono font-black text-[#2A2724] uppercase">{gallerySettings.secondaryColor}</span>
-                                                    </div>
-                                                </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-[#2A2724] uppercase tracking-[0.2em]">Colors</label>
+                                            <div className="flex items-center gap-4 p-3 bg-[#FAF8F5] rounded-lg border border-[#ECE8DF]">
+                                                <span className="flex rounded-md overflow-hidden border border-black/10 h-10 w-16 shrink-0">
+                                                    <span className="flex-1" style={{ background: gallerySettings.secondaryColor }} />
+                                                    <span className="flex-1" style={{ background: gallerySettings.primaryColor }} />
+                                                </span>
+                                                <p className="text-[11px] text-neutral-500 leading-relaxed">Shared with every page. Change them in the <b>Color scheme</b> panel at the top of the page.</p>
                                             </div>
                                         </div>
  
@@ -1400,70 +1376,23 @@ export default function EventDetailPage() {
                 )}
             </AnimatePresence>
 
-            {/* Image Fullscreen Preview (Lightbox) */}
-            <AnimatePresence>
-                {previewPhoto && (
-                    <motion.div 
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        onClick={() => setPreviewPhoto(null)}
-                        className="fixed inset-0 z-[200] bg-neutral-900/95 backdrop-blur-xl flex items-center justify-center p-8 md:p-20 cursor-zoom-out"
-                    >
-                        <motion.div 
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.9, opacity: 0 }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="relative w-full h-full max-w-5xl flex flex-col items-center justify-center gap-6"
-                        >
-                            <div className="relative w-full flex-1">
-                                <Image
-                                    src={previewPhoto}
-                                    alt="Fullscreen Preview"
-                                    fill
-                                    className="object-contain"
-                                    quality={100}
-                                    unoptimized
-                                    priority
-                                />
-                            </div>
-                            <div className="flex gap-4">
-                                <button 
-                                    onClick={() => executePrint(previewPhoto)}
-                                    className="bg-white/10 hover:bg-white text-white hover:text-neutral-900 px-6 py-3 rounded-full text-[10px] font-black uppercase tracking-widest transition-all backdrop-blur-md flex items-center gap-2"
-                                >
-                                    <Printer size={14} /> Print Photo
-                                </button>
-                                <button 
-                                    onClick={() => handleDownload(previewPhoto, 'preview')}
-                                    disabled={downloadingId === 'preview'}
-                                    className="bg-white/10 hover:bg-white text-white hover:text-neutral-900 px-6 py-3 rounded-full text-[10px] font-black uppercase tracking-widest transition-all backdrop-blur-md flex items-center gap-2 disabled:opacity-50"
-                                >
-                                    {downloadingId === 'preview' ? (
-                                        <div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />
-                                    ) : (
-                                        <Download size={14} />
-                                    )}
-                                    {downloadingId === 'preview' ? 'Downloading...' : 'Download Original'}
-                                </button>
-                                <button 
-                                    onClick={() => setPreviewPhoto(null)}
-                                    className="bg-white text-neutral-900 px-6 py-3 rounded-full text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all"
-                                >
-                                    Close
-                                </button>
-                            </div>
-                        </motion.div>
-                        <button 
-                            className="absolute top-10 right-10 text-white/40 hover:text-white transition-colors"
-                            onClick={() => setPreviewPhoto(null)}
-                        >
-                            <Plus size={40} className="rotate-45" />
+            {/* Image preview: swipe, arrows or keys to move between photos */}
+            <ImageViewer
+                items={boothPhotos.map(p => ({ id: p.id, src: p.image_url, thumb: p.thumb_url }))}
+                index={previewIndex}
+                onIndexChange={setPreviewIndex}
+                onClose={() => setPreviewIndex(null)}
+                onNearEnd={hasMorePhotos && !loadingPhotos ? () => fetchPhotos(photoPage + 1) : undefined}
+                actions={(item) => (
+                    <>
+                        <button onClick={() => executePrint(item.src)} className={viewerButton}><Printer size={16} /> Print</button>
+                        <button onClick={() => handleDownload(item.src, 'preview')} disabled={downloadingId === 'preview'} className={viewerButtonPrimary}>
+                            {downloadingId === 'preview' ? <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" /> : <Download size={16} />}
+                            {downloadingId === 'preview' ? 'Downloading…' : 'Download original'}
                         </button>
-                    </motion.div>
+                    </>
                 )}
-            </AnimatePresence>
+            />
             {/* Bulk Actions Bar */}
             <AnimatePresence>
                 {selectedPhotos.length > 0 && (

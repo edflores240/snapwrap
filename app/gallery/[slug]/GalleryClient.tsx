@@ -4,8 +4,10 @@ import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { GALLERY_PAGE_SIZE as PAGE_SIZE, GALLERY_PHOTO_COLUMNS as PHOTO_COLUMNS } from '@/lib/gallery-queries';
 import Image from 'next/image';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Download, Printer, X, Layout, Calendar, Clock, Camera } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { resolveEventTheme } from '@/lib/event-theme';
+import ImageViewer, { viewerButton, viewerButtonPrimary } from '@/components/ui/ImageViewer';
+import { Download, Printer } from 'lucide-react';
 
 export interface Event {
     id: string;
@@ -35,7 +37,7 @@ export default function GalleryClient({ initialEvent, initialPhotos, initialTota
     const [photos, setPhotos] = useState<Photo[]>(initialPhotos);
     const [loadingMore, setLoadingMore] = useState(false);
     const totalPhotos = initialTotal;
-    const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+    const [previewIndex, setPreviewIndex] = useState<number | null>(null);
     const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
     const loadMore = async () => {
@@ -103,10 +105,10 @@ export default function GalleryClient({ initialEvent, initialPhotos, initialTota
         printWindow.document.close();
     };
 
-    const themeColor = event.config?.boothSettings?.themeColor || '#171717';
+    const { primary: themeColor, secondary: pageBg } = resolveEventTheme(event.config);
 
     return (
-        <div className="min-h-screen bg-[#F7F7F5] selection:bg-neutral-900 selection:text-white">
+        <div className="min-h-screen" style={{ background: pageBg, color: themeColor }}>
             {/* Gallery Grid - Start immediately with photos */}
             <main className="max-w-7xl mx-auto px-8 py-20 pb-40">
                 {photos.length === 0 ? (
@@ -122,8 +124,9 @@ export default function GalleryClient({ initialEvent, initialPhotos, initialTota
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: (i % PAGE_SIZE) * 0.05 }}
                                 whileHover={{ y: -8, boxShadow: `0 20px 40px -10px ${themeColor}22` }}
-                                className="group relative aspect-[3/4.5] bg-white rounded-lg overflow-hidden border border-neutral-100 transition-all duration-500 cursor-zoom-in"
-                                onDoubleClick={() => setPreviewPhoto(photo.final_url || photo.image_url)}
+                                className="group relative aspect-[3/4.5] bg-black/5 rounded-lg overflow-hidden transition-all duration-500 cursor-zoom-in"
+                                style={{ border: `1px solid ${themeColor}1a` }}
+                                onClick={() => setPreviewIndex(i)}
                             >
                                 <Image
                                     src={photo.final_url || photo.thumb_url || photo.image_url}
@@ -169,7 +172,8 @@ export default function GalleryClient({ initialEvent, initialPhotos, initialTota
                         <button
                             onClick={loadMore}
                             disabled={loadingMore}
-                            className="px-8 py-3 rounded-md border border-neutral-300 text-neutral-700 text-xs font-bold uppercase tracking-widest hover:bg-white transition-colors disabled:opacity-50"
+                            className="px-8 py-3 rounded-md text-xs font-bold uppercase tracking-widest transition-opacity hover:opacity-70 disabled:opacity-50"
+                            style={{ border: `1.5px solid ${themeColor}55`, color: themeColor }}
                         >
                             {loadingMore ? 'Loading…' : `Load more (${totalPhotos - photos.length} left)`}
                         </button>
@@ -177,65 +181,22 @@ export default function GalleryClient({ initialEvent, initialPhotos, initialTota
                 )}
             </main>
 
-            {/* Lightbox - Icon Only Controls */}
-            <AnimatePresence>
-                {previewPhoto && (
-                    <motion.div 
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        onClick={() => setPreviewPhoto(null)}
-                        className="fixed inset-0 z-[200] bg-neutral-900/95 backdrop-blur-xl flex items-center justify-center p-8 md:p-20 cursor-zoom-out"
-                    >
-                        <motion.div 
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.9, opacity: 0 }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="relative w-full h-full max-w-5xl flex flex-col items-center justify-center gap-6"
-                        >
-                            <div className="relative w-full flex-1">
-                                <Image
-                                    src={previewPhoto}
-                                    alt="Preview"
-                                    fill
-                                    className="object-contain"
-                                    quality={100}
-                                    unoptimized
-                                />
-                            </div>
-                            <div className="flex gap-4">
-                                <button 
-                                    onClick={() => executePrint(previewPhoto)}
-                                    className="bg-white/10 hover:bg-white text-white hover:text-neutral-900 w-14 h-14 rounded-full transition-all backdrop-blur-md flex items-center justify-center"
-                                    title="Print"
-                                >
-                                    <Printer size={20} />
-                                </button>
-                                <button 
-                                    onClick={() => handleDownload(previewPhoto, 'preview')}
-                                    disabled={downloadingId === 'preview'}
-                                    className="bg-white/10 hover:bg-white text-white hover:text-neutral-900 w-14 h-14 rounded-full transition-all backdrop-blur-md flex items-center justify-center disabled:opacity-50"
-                                    title="Download"
-                                >
-                                    {downloadingId === 'preview' ? (
-                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                    ) : (
-                                        <Download size={20} />
-                                    )}
-                                </button>
-                                <button 
-                                    onClick={() => setPreviewPhoto(null)}
-                                    className="bg-white text-neutral-900 w-14 h-14 rounded-full hover:scale-105 transition-all flex items-center justify-center"
-                                    title="Close"
-                                >
-                                    <X size={20} />
-                                </button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
+            {/* Lightbox: swipe, arrows or keys to move between photos */}
+            <ImageViewer
+                items={photos.map(p => ({ id: p.id, src: p.final_url || p.image_url, thumb: p.thumb_url }))}
+                index={previewIndex}
+                onIndexChange={setPreviewIndex}
+                onClose={() => setPreviewIndex(null)}
+                onNearEnd={photos.length < totalPhotos ? loadMore : undefined}
+                actions={(item) => (
+                    <>
+                        <button onClick={() => executePrint(item.src)} className={viewerButton}><Printer size={16} /> Print</button>
+                        <button onClick={() => handleDownload(item.src, item.id)} disabled={downloadingId === item.id} className={viewerButtonPrimary}>
+                            {downloadingId === item.id ? <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" /> : <Download size={16} />} Download
+                        </button>
+                    </>
                 )}
-            </AnimatePresence>
+            />
         </div>
     );
 }

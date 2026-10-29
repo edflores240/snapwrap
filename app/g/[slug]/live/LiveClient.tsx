@@ -6,10 +6,10 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Maximize2 } from 'lucide-react';
 import { getSlideshow, readGuestConfig, type SlideshowPhoto } from '@/lib/guest-camera';
 import type { GuestEvent } from '../GuestApp';
+import { eventTitleClass } from '@/lib/gallery-typography';
 
 const SLIDE_MS = 6000;
 const POLL_MS = 10000;
-const SERIF = '"Playfair Display", Georgia, serif';
 
 /** Full-screen slideshow for a projector: new photos jump the queue, older ones keep cycling */
 export default function LiveClient({ event }: { event: GuestEvent }) {
@@ -79,7 +79,7 @@ export default function LiveClient({ event }: { event: GuestEvent }) {
         return (
             <main className="min-h-screen bg-black text-white flex items-center justify-center p-8 text-center">
                 <div className="max-w-md space-y-3">
-                    <h1 className="text-3xl" style={{ fontFamily: SERIF }}>{event.name}</h1>
+                    <h1 className={`text-3xl ${eventTitleClass(event.config)}`}>{event.name}</h1>
                     <p className="opacity-60 text-sm">
                         The live slideshow isn&apos;t on. Turn on &ldquo;Live slideshow&rdquo; in the event&apos;s Guest Camera settings, or open this page after the album is revealed.
                     </p>
@@ -112,7 +112,7 @@ export default function LiveClient({ event }: { event: GuestEvent }) {
                         />
                         {(current.caption || current.guest_name) && (
                             <div className="absolute left-0 right-0 bottom-0 p-10 pr-56 bg-gradient-to-t from-black/70 to-transparent">
-                                {current.caption && <p className="text-3xl" style={{ fontFamily: SERIF }}>{current.caption}</p>}
+                                {current.caption && <p className={`text-3xl ${eventTitleClass(event.config)}`}>{current.caption}</p>}
                                 {current.guest_name && <p className="text-sm uppercase tracking-[0.3em] opacity-70 mt-2">{current.guest_name}</p>}
                             </div>
                         )}
@@ -123,7 +123,7 @@ export default function LiveClient({ event }: { event: GuestEvent }) {
             {photos.length === 0 && available && (
                 <div className="absolute inset-0 flex items-center justify-center text-center p-8">
                     <div>
-                        <h1 className="text-5xl mb-4" style={{ fontFamily: SERIF }}>{cfg.welcomeTitle || event.name}</h1>
+                        <h1 className={`text-5xl mb-4 ${eventTitleClass(event.config)}`}>{cfg.welcomeTitle || event.name}</h1>
                         <p className="opacity-60">Scan the code to add the first photo.</p>
                     </div>
                 </div>

@@ -250,7 +250,7 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
             )}
 
             {/* Viewfinder / review */}
-            <div className="flex-1 min-h-0 flex items-center justify-center px-2">
+            <div className="flex-1 min-h-0 flex items-center justify-center px-2 pb-4">
                 <div
                     ref={frameRef}
                     className="relative overflow-hidden rounded-2xl bg-neutral-900"
@@ -290,7 +290,7 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
             </div>
 
             {/* Controls */}
-            <div className="px-4 pt-3 pb-[max(20px,env(safe-area-inset-bottom))] space-y-3">
+            <div className="px-4 pt-2 pb-[max(20px,env(safe-area-inset-bottom))] space-y-2">
                 {shot ? (
                     <>
                         {config.captionsEnabled && (
@@ -323,7 +323,7 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
                 ) : (
                     <>
                         {config.filtersEnabled && (
-                            <div className="flex gap-3 overflow-x-auto px-1 pb-1" style={{ scrollbarWidth: 'none' }}>
+                            <div className="flex gap-3 overflow-x-auto px-3 pt-3 pb-2" style={{ scrollbarWidth: 'none' }}>
                                 {GUEST_FILTERS.map(fl => (
                                     <button key={fl.id} onClick={() => setFilterId(fl.id)} className="shrink-0 flex flex-col items-center gap-1.5 w-[58px]">
                                         <span
