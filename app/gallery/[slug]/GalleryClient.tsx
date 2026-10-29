@@ -7,7 +7,8 @@ import Image from 'next/image';
 import { motion } from 'framer-motion';
 import { resolveEventTheme } from '@/lib/event-theme';
 import ImageViewer, { viewerButton, viewerButtonPrimary } from '@/components/ui/ImageViewer';
-import { Download, Printer } from 'lucide-react';
+import Link from 'next/link';
+import { Download, Printer, Images, Lock } from 'lucide-react';
 
 export interface Event {
     id: string;
@@ -109,6 +110,24 @@ export default function GalleryClient({ initialEvent, initialPhotos, initialTota
 
     return (
         <div className="min-h-screen" style={{ background: pageBg, color: themeColor }}>
+            {/* Guest album link, when the guest camera is on */}
+            {event.config?.guestCamera?.enabled && (() => {
+                const opensAt = event.config.guestCamera.revealAt ? new Date(event.config.guestCamera.revealAt) : null;
+                const open = !!opensAt && opensAt.getTime() <= Date.now();
+                return (
+                    <div className="max-w-7xl mx-auto px-8 pt-10 flex justify-center">
+                        <Link
+                            href={`/g/${event.slug}/album`}
+                            className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
+                            style={{ border: `2px solid ${themeColor}`, color: themeColor }}
+                        >
+                            {open ? <Images size={16} /> : <Lock size={16} />}
+                            {open ? 'Guest album' : opensAt ? `Guest album · opens ${opensAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : 'Guest album · coming soon'}
+                        </Link>
+                    </div>
+                );
+            })()}
+
             {/* Gallery Grid - Start immediately with photos */}
             <main className="max-w-7xl mx-auto px-8 py-20 pb-40">
                 {photos.length === 0 ? (

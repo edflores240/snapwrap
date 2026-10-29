@@ -34,6 +34,8 @@ export interface FilmLook {
     leakColor: RGB;
     stamp: 'none' | 'date' | 'digital' | 'rec';
     stampColor: string;
+    /** A border drawn over the photo, like instant film */
+    frame: 'none' | 'polaroid';
     /** Approximation for browsers without WebGL */
     basic: { brightness: number; contrast: number; saturate: number; sepia: number; gray: number };
 }
@@ -46,7 +48,7 @@ const look = (l: Partial<FilmLook> & Pick<FilmLook, 'id' | 'label' | 'swatch'>):
     shadow: [0, 0, 0], highlight: [0, 0, 0],
     mono: 0, grain: 0, vignette: 0, glow: 0, aberration: 0, scanlines: 0,
     leak: 0, leakColor: [1, 0.45, 0.15],
-    stamp: 'none', stampColor: '#ff9a3c',
+    stamp: 'none', stampColor: '#ff9a3c', frame: 'none',
     basic: { brightness: 1, contrast: 1, saturate: 1, sepia: 0, gray: 0 },
     ...l,
 });
@@ -81,7 +83,7 @@ export const FILM_LOOKS: FilmLook[] = [
         curves: { r: [[0, 0.07], [0.5, 0.52], [1, 0.97]], g: [[0, 0.08], [0.5, 0.5], [1, 0.96]], b: [[0, 0.13], [0.5, 0.5], [1, 0.9]] },
         sat: 0.88, contrast: 0.94, fade: 0.1,
         shadow: [-0.01, 0.025, 0.04], highlight: [0.05, 0.035, 0.0],
-        grain: 0.08, vignette: 0.3, glow: 0.4,
+        grain: 0.08, vignette: 0.3, glow: 0.4, frame: 'polaroid',
         basic: { brightness: 1.05, contrast: 0.92, saturate: 0.88, sepia: 0.2, gray: 0 },
     }),
 
@@ -431,5 +433,51 @@ export function drawStamp(ctx: CanvasRenderingContext2D, w: number, h: number, l
         ctx.arc(w - unit * 0.07, unit * 0.05 + size * 0.45, size * 0.38, 0, Math.PI * 2);
         ctx.fill();
     }
+    ctx.restore();
+}
+
+/**
+ * Instant-film border laid over the photo: even sides and top, a deep chin at the bottom with a
+ * handwritten date. Drawn after the look, so the white stays clean (no grain or vignette on it).
+ */
+export function drawFrame(ctx: CanvasRenderingContext2D, w: number, h: number, l: FilmLook, date = new Date()) {
+    if (l.frame !== 'polaroid') return;
+    const side = w * 0.055;
+    const bottom = Math.min(w * 0.21, h * 0.2);
+    const r = w * 0.012;
+    const x = side, y = side, iw = w - side * 2, ih = h - side - bottom;
+
+    ctx.save();
+    // Paper, with the photo window cut out
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + iw, y, x + iw, y + ih, r);
+    ctx.arcTo(x + iw, y + ih, x, y + ih, r);
+    ctx.arcTo(x, y + ih, x, y, r);
+    ctx.arcTo(x, y, x + iw, y, r);
+    ctx.closePath();
+    ctx.fillStyle = '#fbf9f3';
+    ctx.fill('evenodd');
+
+    // A hairline shadow where the photo meets the paper
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + iw, y, x + iw, y + ih, r);
+    ctx.arcTo(x + iw, y + ih, x, y + ih, r);
+    ctx.arcTo(x, y + ih, x, y, r);
+    ctx.arcTo(x, y, x + iw, y, r);
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = Math.max(1, w * 0.002);
+    ctx.stroke();
+
+    // Handwritten date on the chin
+    const size = bottom * 0.3;
+    ctx.font = `${size}px "Bradley Hand", "Segoe Script", "Snell Roundhand", cursive`;
+    ctx.fillStyle = 'rgba(60,55,50,0.6)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), w / 2, y + ih + bottom * 0.46);
     ctx.restore();
 }

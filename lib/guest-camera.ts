@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { FILM_LOOKS, FilmRenderer, drawStamp, lookById, type FilmLook } from './film-filters';
+import { FILM_LOOKS, FilmRenderer, drawFrame, drawStamp, lookById, type FilmLook } from './film-filters';
 
 /**
  * Guest camera: settings, server calls and in-browser capture helpers.
@@ -355,7 +355,7 @@ export async function renderShot(
     sourceW: number,
     sourceH: number,
     frameRatio: number,
-    opts: { filter: FilmLook },
+    opts: { filter: FilmLook; /** Save the photo mirrored, exactly as the front-camera preview shows it */ mirror?: boolean },
 ): Promise<CapturedShot> {
     // Crop like object-fit: cover
     let sw = sourceW, sh = sourceH, sx = 0, sy = 0;
@@ -373,19 +373,21 @@ export async function renderShot(
 
     if (gl) {
         gl.resize(w, h);
-        // `mirror` is deliberately off: guests see themselves mirrored, the saved photo is how others see them
-        gl.draw(source, sourceW, sourceH, look, { mirror: false, seed: Math.random() * 1000, leakPos: LEAK_SPOTS[Math.floor(Math.random() * LEAK_SPOTS.length)] });
+        gl.draw(source, sourceW, sourceH, look, { mirror: !!opts.mirror, seed: Math.random() * 1000, leakPos: LEAK_SPOTS[Math.floor(Math.random() * LEAK_SPOTS.length)] });
         ctx.drawImage(gl.canvas, 0, 0);
     } else {
         const hasCtxFilter = typeof (ctx as CanvasRenderingContext2D & { filter?: string }).filter === 'string';
         const css = basicCss(look);
         if (hasCtxFilter && css !== 'none') ctx.filter = css;
+        if (opts.mirror) { ctx.translate(w, 0); ctx.scale(-1, 1); }
         ctx.drawImage(source, sx, sy, sw, sh, 0, 0, w, h);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.filter = 'none';
         if (!hasCtxFilter && css !== 'none') applyFilterByHand(ctx, w, h, look);
         paintFallbackFinish(ctx, w, h, look);
     }
     drawStamp(ctx, w, h, look);
+    drawFrame(ctx, w, h, look);
     return finishShot(out);
 }
 

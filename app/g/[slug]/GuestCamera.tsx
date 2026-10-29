@@ -6,7 +6,7 @@ import {
     GUEST_FILTERS, basicCss, filterById, renderShot, shotFromFile,
     type CapturedShot, type GuestConfig,
 } from '@/lib/guest-camera';
-import { FilmRenderer, drawStamp } from '@/lib/film-filters';
+import { FilmRenderer, drawFrame, drawStamp } from '@/lib/film-filters';
 
 interface Props {
     config: GuestConfig;
@@ -136,6 +136,7 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
                 const ctx = stamp.getContext('2d')!;
                 ctx.clearRect(0, 0, w, h);
                 drawStamp(ctx, w, h, look);
+                drawFrame(ctx, w, h, look);
             }
         };
         raf = requestAnimationFrame(draw);
@@ -159,13 +160,13 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
         setFlash(true);
         setTimeout(() => setFlash(false), 140);
         try {
-            const next = await renderShot(video, video.videoWidth, video.videoHeight, frame.clientWidth / frame.clientHeight, { filter: look });
+            const next = await renderShot(video, video.videoWidth, video.videoHeight, frame.clientWidth / frame.clientHeight, { filter: look, mirror: facing === 'user' });
             setShot(next);
             setCaption('');
         } catch {
             setError('That photo didn\'t work. Try again.');
         }
-    }, [ready, shotsLeft, look]);
+    }, [ready, shotsLeft, look, facing]);
 
     const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];

@@ -16,7 +16,9 @@ import {
     Share2, 
     Heart, 
     Star, 
-    Sparkles 
+    Sparkles,
+    Images,
+    Lock
 } from 'lucide-react';
 
 const CORNERS: Record<string, number> = { sharp: 0, soft: 14, round: 36 };
@@ -223,6 +225,12 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
     const minPhotoWidth = PHOTO_MIN_WIDTH[pp.photoSize];
     const ctaHref = pp.ctaLabel ? safeLink(pp.ctaUrl) : null;
 
+    // Link to the guest album when the guest camera is on; it says when the album opens if that hasn't happened
+    const guestCfg = event.config?.guestCamera;
+    const albumHref = guestCfg?.enabled ? `/g/${event.slug}/album` : null;
+    const albumOpensAt = guestCfg?.revealAt ? new Date(guestCfg.revealAt) : null;
+    const albumOpen = !!albumOpensAt && albumOpensAt.getTime() <= Date.now();
+
     const pattern = patternStyle(pp.bgPattern, primaryColor, pp.patternStrength);
     const hover = hoverProps(pp.hover);
     const zoomOnHover = !pp.hover || pp.hover === 'theme' || pp.hover === 'zoom';
@@ -278,7 +286,7 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                 </div>
             )}
 
-            {(showRefresh || ctaHref) && (
+            {(showRefresh || ctaHref || albumHref) && (
                 <div className={`mt-8 flex flex-wrap gap-3 ${isSidebar || alignLeft ? 'justify-start' : 'justify-center'}`}>
                     {ctaHref && (
                         <a
@@ -290,6 +298,20 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                         >
                             {pp.ctaLabel}
                         </a>
+                    )}
+                    {albumHref && (
+                        <Link
+                            href={albumHref}
+                            className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
+                            style={{ border: `2px solid ${primaryColor}`, color: primaryColor }}
+                        >
+                            {albumOpen ? <Images size={16} /> : <Lock size={16} />}
+                            {albumOpen
+                                ? 'Guest album'
+                                : albumOpensAt
+                                    ? `Guest album · opens ${albumOpensAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                    : 'Guest album · coming soon'}
+                        </Link>
                     )}
                     {showRefresh && (
                         <button
