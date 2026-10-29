@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabase';
@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import TemplateDesigner, { TemplateConfig } from '@/components/templates/TemplateDesigner';
 import GuestCameraAdmin from '@/components/admin/GuestCameraAdmin';
+import { applyReplacements, externalizeDataUrls, hasDataUrls, uploadDataUrls } from '@/lib/config-assets';
 import PrintDesigner from '@/components/PrintDesigner';
 import GalleryPreview from '@/components/admin/GalleryPreview';
 import Segmented from '@/components/admin/Segmented';
@@ -284,6 +285,29 @@ export default function EventDetailPage() {
         }
     }, [activeTab]);
 
+    // Older events keep template images inside the event row (megabytes); move them to storage once
+    const [optimizing, setOptimizing] = useState(false);
+    const eventRef = useRef<Event | null>(null);
+    eventRef.current = event;
+    const optimizeConfig = async (ev: Event) => {
+        setOptimizing(true);
+        try {
+            const map = await uploadDataUrls(ev.config, ev.slug);
+            if (map.size === 0) return;
+            // Apply to the newest settings, in case something was saved while the images uploaded
+            const latest = eventRef.current ?? ev;
+            const config = applyReplacements(latest.config, map);
+            const { error } = await supabase.from('events').update({ config }).eq('id', ev.id);
+            if (error) throw error;
+            setEvent(prev => (prev ? { ...prev, config } : prev));
+            if (config?.templates) setTemplates(config.templates);
+        } catch (err) {
+            console.error('Optimizing the event settings failed:', (err as Error).message);
+        } finally {
+            setOptimizing(false);
+        }
+    };
+
     const fetchEvent = async () => {
         try {
             const { data: { user } } = await supabase.auth.getUser();
@@ -306,6 +330,7 @@ export default function EventDetailPage() {
 
             setEvent(data);
             setPhotoCount(count ?? 0);
+            if (hasDataUrls(data.config)) void optimizeConfig(data);
             if (data.config?.templates) setTemplates(data.config.templates);
             if (data.config?.boothSettings) setBoothSettings(prev => ({ ...prev, ...data.config.boothSettings }));
             if (data.config?.publicPage) {
@@ -636,6 +661,12 @@ export default function EventDetailPage() {
                     </div>
                 </div>
             </header>
+
+            {optimizing && (
+                <div className="rounded-2xl border border-[#ECE8DF] bg-white px-5 py-3 text-xs font-bold text-neutral-500 flex items-center gap-3">
+                    <RefreshCw size={14} className="animate-spin" /> Making this event faster: moving template images to storage. This only happens once.
+                </div>
+            )}
 
             {/* Sub-Navigation: Minimal Underline Style */}
             <nav className="flex gap-10 border-b border-[#ECE8DF]">
@@ -1346,7 +1377,10 @@ export default function EventDetailPage() {
                             <TemplateDesigner 
                                 initialTemplate={editingTemplate}
                                 onClose={() => setShowEditor(false)}
-                                onSave={(tpl) => {
+                                onSave={async (rawTpl) => {
+                                    setShowEditor(false);
+                                    // Images go to storage so the event row stays small
+                                    const { value: tpl } = await externalizeDataUrls(rawTpl, event.slug);
                                     let updated: TemplateConfig[];
                                     const existingIndex = templates.findIndex(t => t.id === tpl.id);
                                     if (existingIndex >= 0) {
@@ -1356,10 +1390,9 @@ export default function EventDetailPage() {
                                     }
                                     setTemplates(updated);
                                     const config = { ...(event.config || {}), templates: updated };
-                                    supabase.from('events').update({ config }).eq('id', event.id).then(() => {
-                                        setEvent({ ...event, config });
-                                    });
-                                    setShowEditor(false);
+                                    const { error } = await supabase.from('events').update({ config }).eq('id', event.id);
+                                    if (error) console.error('Saving the template failed:', error.message);
+                                    else setEvent({ ...event, config });
                                 }}
                             />
                         </div>

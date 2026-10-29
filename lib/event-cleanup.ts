@@ -30,6 +30,8 @@ export async function deleteEventCompletely(event: { id: string; slug: string })
     const paths = new Set<string>([
         ...(await listFolder(event.slug)),
         ...(await listFolder(`${event.slug}/thumbs`)),
+        // Template images moved out of the event settings
+        ...(await listFolder(`${event.slug}/assets`)),
         // Guest camera photos and their thumbnails
         ...(await listFolder(`${event.slug}/guest`)),
         ...(await listFolder(`${event.slug}/guest/thumbs`)),

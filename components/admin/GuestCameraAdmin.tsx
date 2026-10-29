@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import PrintDesigner from '@/components/PrintDesigner';
+import { externalizeDataUrls } from '@/lib/config-assets';
 import {
     WEDDING_PROMPTS, fromLocalInput, guestUrl, readGuestConfig, toLocalInput,
     type GuestConfig, type GuestPhotoStatus,
@@ -135,7 +136,8 @@ export default function GuestCameraAdmin({ event, accent, printTemplates, onConf
     const save = async (next: GuestConfig = cfg) => {
         setSaving(true);
         setError(null);
-        const config = { ...(event.config || {}), guestCamera: next };
+        // Never push embedded images back into the event row; they make saves time out
+        const { value: config } = await externalizeDataUrls({ ...(event.config || {}), guestCamera: next }, event.slug);
         const { error: err } = await supabase.from('events').update({ config }).eq('id', event.id);
         setSaving(false);
         if (err) { setError(err.message); return false; }
