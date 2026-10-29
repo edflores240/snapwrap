@@ -3,9 +3,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, SwitchCamera, Zap, ZapOff, ImagePlus, Shuffle, Check, RotateCcw } from 'lucide-react';
 import {
-    GUEST_FILTERS, filterById, renderShot, shotFromFile,
+    GUEST_FILTERS, basicCss, filterById, renderShot, shotFromFile,
     type CapturedShot, type GuestConfig,
 } from '@/lib/guest-camera';
+import { FilmRenderer, drawStamp } from '@/lib/film-filters';
 
 interface Props {
     config: GuestConfig;
@@ -21,13 +22,18 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
     const frameRef = useRef<HTMLDivElement>(null);
     const fileRef = useRef<HTMLInputElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
+    const glCanvasRef = useRef<HTMLCanvasElement>(null);
+    const stampRef = useRef<HTMLCanvasElement>(null);
+    const rendererRef = useRef<FilmRenderer | null>(null);
+    // null until we know whether WebGL works; false falls back to a plain CSS-filtered video
+    const [glOk, setGlOk] = useState<boolean | null>(null);
 
     const [facing, setFacing] = useState<'user' | 'environment'>('environment');
     const [ready, setReady] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [torchSupported, setTorchSupported] = useState(false);
     const [torchOn, setTorchOn] = useState(false);
-    const [filterId, setFilterId] = useState(config.filtersEnabled ? 'natural' : 'natural');
+    const [filterId, setFilterId] = useState('natural');
     const [flash, setFlash] = useState(false);
     const [shot, setShot] = useState<CapturedShot | null>(null);
     const [caption, setCaption] = useState('');
@@ -37,7 +43,7 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
     const [promptIndex, setPromptIndex] = useState<number | null>(config.prompts.length ? Math.floor(Math.random() * config.prompts.length) : null);
 
     const prompt = promptIndex !== null ? config.prompts[promptIndex] ?? null : null;
-    const filter = filterById(filterId);
+    const look = filterById(filterId);
 
     useEffect(() => {
         const update = () => setPortrait(window.innerHeight >= window.innerWidth);
@@ -93,6 +99,49 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
     // Free the preview image when it's replaced or the camera closes
     useEffect(() => () => { if (shot) URL.revokeObjectURL(shot.previewUrl); }, [shot]);
 
+    // Film filters: draw the camera through the look on a WebGL canvas, so guests see the real result
+    useEffect(() => {
+        const canvas = glCanvasRef.current;
+        if (!canvas) return;
+        const renderer = FilmRenderer.create(canvas);
+        rendererRef.current = renderer;
+        setGlOk(!!renderer);
+        return () => { renderer?.destroy(); rendererRef.current = null; };
+    }, []);
+
+    useEffect(() => {
+        const renderer = rendererRef.current;
+        const video = videoRef.current;
+        const canvas = glCanvasRef.current;
+        const stamp = stampRef.current;
+        if (!glOk || !renderer || !video || !canvas || !ready || shot) return;
+
+        let raf = 0;
+        let frame = 0;
+        let lastStamp = 0;
+        const draw = (t: number) => {
+            raf = requestAnimationFrame(draw);
+            if (video.readyState < 2 || video.videoWidth === 0) return;
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            let w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
+            const k = Math.min(1, 1100 / Math.max(w, h));
+            w = Math.round(w * k); h = Math.round(h * k);
+            if (w < 2 || h < 2) return;
+            renderer.resize(w, h);
+            renderer.draw(video, video.videoWidth, video.videoHeight, look, { mirror: facing === 'user', seed: (frame++ % 997) * 1.37 });
+            // The date stamp / REC badge sits in a 2D layer; refresh it about twice a second
+            if (stamp && t - lastStamp > 500) {
+                lastStamp = t;
+                if (stamp.width !== w || stamp.height !== h) { stamp.width = w; stamp.height = h; }
+                const ctx = stamp.getContext('2d')!;
+                ctx.clearRect(0, 0, w, h);
+                drawStamp(ctx, w, h, look);
+            }
+        };
+        raf = requestAnimationFrame(draw);
+        return () => cancelAnimationFrame(raf);
+    }, [glOk, ready, shot, look, facing]);
+
     const toggleTorch = async () => {
         const track = streamRef.current?.getVideoTracks()[0];
         if (!track) return;
@@ -110,23 +159,20 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
         setFlash(true);
         setTimeout(() => setFlash(false), 140);
         try {
-            const next = await renderShot(video, video.videoWidth, video.videoHeight, frame.clientWidth / frame.clientHeight, {
-                mirror: facing === 'user',
-                filter,
-            });
+            const next = await renderShot(video, video.videoWidth, video.videoHeight, frame.clientWidth / frame.clientHeight, { filter: look });
             setShot(next);
             setCaption('');
         } catch {
             setError('That photo didn\'t work. Try again.');
         }
-    }, [ready, shotsLeft, facing, filter]);
+    }, [ready, shotsLeft, look]);
 
     const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         e.target.value = '';
         if (!file || shotsLeft <= 0) return;
         try {
-            setShot(await shotFromFile(file));
+            setShot(await shotFromFile(file, look));
             setCaption('');
         } catch {
             setError('We couldn\'t read that photo.');
@@ -210,17 +256,20 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
                     className="relative overflow-hidden rounded-2xl bg-neutral-900"
                     style={{ aspectRatio: ratio, height: '100%', maxWidth: '100%' }}
                 >
+                    {/* With WebGL the video only feeds the canvas; without it the video itself is shown */}
                     <video
                         ref={videoRef}
                         autoPlay playsInline muted
-                        className="absolute inset-0 w-full h-full object-cover"
-                        style={{ transform: facing === 'user' ? 'scaleX(-1)' : undefined, filter: filter.css, visibility: shot ? 'hidden' : 'visible' }}
+                        className={glOk ? 'absolute left-0 top-0 w-px h-px opacity-0 pointer-events-none' : 'absolute inset-0 w-full h-full object-cover'}
+                        style={glOk ? undefined : { transform: facing === 'user' ? 'scaleX(-1)' : undefined, filter: basicCss(look), visibility: shot ? 'hidden' : 'visible' }}
                     />
-                    {!shot && filter.vignette > 0 && (
-                        <div className="absolute inset-0 pointer-events-none" style={{ background: `radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,${filter.vignette}) 100%)` }} />
+                    <canvas ref={glCanvasRef} className="absolute inset-0 w-full h-full" style={{ display: glOk && !shot ? 'block' : 'none' }} />
+                    <canvas ref={stampRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ display: glOk && !shot ? 'block' : 'none' }} />
+                    {glOk === false && !shot && look.vignette > 0 && (
+                        <div className="absolute inset-0 pointer-events-none" style={{ background: `radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,${look.vignette}) 100%)` }} />
                     )}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    {shot && <img src={shot.previewUrl} alt="Your shot" className="absolute inset-0 w-full h-full object-cover" />}
+                    {shot && <img src={shot.previewUrl} alt="Your shot" className="absolute inset-0 w-full h-full object-contain bg-black" />}
                     {flash && <div className="absolute inset-0 bg-white" />}
                     {justSaved && (
                         <div className="absolute inset-x-0 top-4 flex justify-center">
@@ -274,14 +323,18 @@ export default function GuestCamera({ config, accent, shotsLeft, onClose, onKeep
                 ) : (
                     <>
                         {config.filtersEnabled && (
-                            <div className="flex gap-2 overflow-x-auto justify-center" style={{ scrollbarWidth: 'none' }}>
+                            <div className="flex gap-3 overflow-x-auto px-1 pb-1" style={{ scrollbarWidth: 'none' }}>
                                 {GUEST_FILTERS.map(fl => (
-                                    <button
-                                        key={fl.id}
-                                        onClick={() => setFilterId(fl.id)}
-                                        className={`shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider transition-colors ${filterId === fl.id ? 'text-black bg-white' : 'bg-white/10 text-white/70'}`}
-                                    >
-                                        {fl.label}
+                                    <button key={fl.id} onClick={() => setFilterId(fl.id)} className="shrink-0 flex flex-col items-center gap-1.5 w-[58px]">
+                                        <span
+                                            className="w-[46px] h-[46px] rounded-full transition-all"
+                                            style={{
+                                                background: `linear-gradient(145deg, ${fl.swatch[0]}, ${fl.swatch[1]} 55%, ${fl.swatch[2]})`,
+                                                boxShadow: filterId === fl.id ? `0 0 0 2px #000, 0 0 0 4px ${accent}` : '0 0 0 1px rgba(255,255,255,0.15)',
+                                                transform: filterId === fl.id ? 'scale(1.08)' : undefined,
+                                            }}
+                                        />
+                                        <span className={`text-[10px] font-bold tracking-wide whitespace-nowrap ${filterId === fl.id ? 'text-white' : 'text-white/50'}`}>{fl.label}</span>
                                     </button>
                                 ))}
                             </div>

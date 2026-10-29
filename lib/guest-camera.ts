@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { FILM_LOOKS, FilmRenderer, drawStamp, lookById, type FilmLook } from './film-filters';
 
 /**
  * Guest camera: settings, server calls and in-browser capture helpers.
@@ -240,42 +241,21 @@ export function guestUrl(origin: string, slug: string, page: '' | 'album' | 'liv
 
 // ── Capture ────────────────────────────────────────────────────────────────
 
-export interface GuestFilter {
-    id: string;
-    label: string;
-    /** CSS filter for the live preview */
-    css: string;
-    brightness: number;
-    contrast: number;
-    saturate: number;
-    sepia: number;
-    gray: number;
-    grain: number;
-    vignette: number;
-    dateStamp: boolean;
-}
+export type GuestFilter = FilmLook;
+export const GUEST_FILTERS = FILM_LOOKS;
+export const filterById = lookById;
 
-const f = (id: string, label: string, o: Partial<GuestFilter>): GuestFilter => {
-    const full: GuestFilter = { id, label, css: '', brightness: 1, contrast: 1, saturate: 1, sepia: 0, gray: 0, grain: 0, vignette: 0, dateStamp: false, ...o };
-    full.css = [
-        full.brightness !== 1 && `brightness(${full.brightness})`,
-        full.contrast !== 1 && `contrast(${full.contrast})`,
-        full.saturate !== 1 && `saturate(${full.saturate})`,
-        full.sepia > 0 && `sepia(${full.sepia})`,
-        full.gray > 0 && `grayscale(${full.gray})`,
+/** CSS filter that approximates a look; used on browsers without WebGL */
+export function basicCss(l: FilmLook): string {
+    const b = l.basic;
+    return [
+        b.brightness !== 1 && `brightness(${b.brightness})`,
+        b.contrast !== 1 && `contrast(${b.contrast})`,
+        b.saturate !== 1 && `saturate(${b.saturate})`,
+        b.sepia > 0 && `sepia(${b.sepia})`,
+        b.gray > 0 && `grayscale(${b.gray})`,
     ].filter(Boolean).join(' ') || 'none';
-    return full;
-};
-
-export const GUEST_FILTERS: GuestFilter[] = [
-    f('natural', 'Natural', {}),
-    f('disposable', 'Disposable', { brightness: 1.04, contrast: 1.12, saturate: 1.2, sepia: 0.16, grain: 0.1, vignette: 0.35, dateStamp: true }),
-    f('vintage', 'Vintage', { contrast: 1.05, saturate: 0.9, sepia: 0.45, grain: 0.08, vignette: 0.25 }),
-    f('bw', 'B&W', { contrast: 1.15, gray: 1, grain: 0.09, vignette: 0.2 }),
-    f('vivid', 'Vivid', { contrast: 1.08, saturate: 1.5 }),
-];
-
-export const filterById = (id: string) => GUEST_FILTERS.find(x => x.id === id) ?? GUEST_FILTERS[0];
+}
 
 const MAX_SIDE = 1600;
 
@@ -283,30 +263,31 @@ function toBlob(canvas: HTMLCanvasElement, quality = 0.85): Promise<Blob> {
     return new Promise((resolve, reject) => canvas.toBlob(b => (b ? resolve(b) : reject(new Error('Canvas empty'))), 'image/jpeg', quality));
 }
 
-/** Browsers without CanvasRenderingContext2D.filter (older Safari) get the same look by hand */
-function applyFilterByHand(ctx: CanvasRenderingContext2D, w: number, h: number, flt: GuestFilter) {
+/** Browsers without CanvasRenderingContext2D.filter (older Safari) get the basic look by hand */
+function applyFilterByHand(ctx: CanvasRenderingContext2D, w: number, h: number, flt: FilmLook) {
+    const k = flt.basic;
     const img = ctx.getImageData(0, 0, w, h);
     const d = img.data;
     const clamp = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
     for (let i = 0; i < d.length; i += 4) {
-        let r = d[i] * flt.brightness, g = d[i + 1] * flt.brightness, b = d[i + 2] * flt.brightness;
-        r = (r - 128) * flt.contrast + 128; g = (g - 128) * flt.contrast + 128; b = (b - 128) * flt.contrast + 128;
+        let r = d[i] * k.brightness, g = d[i + 1] * k.brightness, b = d[i + 2] * k.brightness;
+        r = (r - 128) * k.contrast + 128; g = (g - 128) * k.contrast + 128; b = (b - 128) * k.contrast + 128;
         const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-        r = lum + (r - lum) * flt.saturate; g = lum + (g - lum) * flt.saturate; b = lum + (b - lum) * flt.saturate;
-        if (flt.sepia > 0) {
+        r = lum + (r - lum) * k.saturate; g = lum + (g - lum) * k.saturate; b = lum + (b - lum) * k.saturate;
+        if (k.sepia > 0) {
             const sr = 0.393 * r + 0.769 * g + 0.189 * b, sg = 0.349 * r + 0.686 * g + 0.168 * b, sb = 0.272 * r + 0.534 * g + 0.131 * b;
-            r += (sr - r) * flt.sepia; g += (sg - g) * flt.sepia; b += (sb - b) * flt.sepia;
+            r += (sr - r) * k.sepia; g += (sg - g) * k.sepia; b += (sb - b) * k.sepia;
         }
-        if (flt.gray > 0) {
+        if (k.gray > 0) {
             const l = 0.299 * r + 0.587 * g + 0.114 * b;
-            r += (l - r) * flt.gray; g += (l - g) * flt.gray; b += (l - b) * flt.gray;
+            r += (l - r) * k.gray; g += (l - g) * k.gray; b += (l - b) * k.gray;
         }
         d[i] = clamp(r); d[i + 1] = clamp(g); d[i + 2] = clamp(b);
     }
     ctx.putImageData(img, 0, 0);
 }
 
-function paintFinish(ctx: CanvasRenderingContext2D, w: number, h: number, flt: GuestFilter) {
+function paintFallbackFinish(ctx: CanvasRenderingContext2D, w: number, h: number, flt: FilmLook) {
     if (flt.grain > 0) {
         const tile = document.createElement('canvas');
         tile.width = tile.height = 160;
@@ -319,7 +300,7 @@ function paintFinish(ctx: CanvasRenderingContext2D, w: number, h: number, flt: G
         }
         tctx.putImageData(noise, 0, 0);
         ctx.save();
-        ctx.globalAlpha = flt.grain;
+        ctx.globalAlpha = Math.min(0.2, flt.grain * 0.6);
         ctx.globalCompositeOperation = 'overlay';
         ctx.fillStyle = ctx.createPattern(tile, 'repeat')!;
         ctx.fillRect(0, 0, w, h);
@@ -332,55 +313,13 @@ function paintFinish(ctx: CanvasRenderingContext2D, w: number, h: number, flt: G
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, w, h);
     }
-    if (flt.dateStamp) {
-        const d = new Date();
-        const stamp = `'${String(d.getFullYear()).slice(2)} ${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getDate()).padStart(2, '0')}`;
-        const size = Math.round(Math.min(w, h) * 0.04);
-        ctx.save();
-        ctx.font = `700 ${size}px "Courier New", monospace`;
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'bottom';
-        ctx.shadowColor = 'rgba(255,120,0,0.8)';
-        ctx.shadowBlur = size * 0.5;
-        ctx.fillStyle = '#ff9a3c';
-        ctx.fillText(stamp, w - size, h - size);
-        ctx.restore();
-    }
 }
 
 export interface CapturedShot { full: Blob; thumb: Blob; previewUrl: string; /** tiny data URL for the locked-album teaser */ preview: string }
 
-/**
- * Draws the part of `source` that matches `frameRatio` (width / height) at no more than 1600px,
- * applies the filter and returns a full-size JPEG plus a small thumbnail.
- */
-export async function renderShot(
-    source: HTMLVideoElement | ImageBitmap,
-    sourceW: number,
-    sourceH: number,
-    frameRatio: number,
-    opts: { mirror: boolean; filter: GuestFilter },
-): Promise<CapturedShot> {
-    // Crop like object-fit: cover
-    let sw = sourceW, sh = sourceH, sx = 0, sy = 0;
-    if (sourceW / sourceH > frameRatio) { sw = sourceH * frameRatio; sx = (sourceW - sw) / 2; }
-    else { sh = sourceW / frameRatio; sy = (sourceH - sh) / 2; }
-
-    const scale = Math.min(1, MAX_SIDE / Math.max(sw, sh));
-    const w = Math.round(sw * scale), h = Math.round(sh * scale);
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d')!;
-
-    const hasCtxFilter = typeof (ctx as CanvasRenderingContext2D & { filter?: string }).filter === 'string';
-    const flt = opts.filter;
-    if (hasCtxFilter && flt.css !== 'none') ctx.filter = flt.css;
-    // `mirror` is deliberately not applied: the guest sees themselves mirrored, but the saved photo is how others see them
-    ctx.drawImage(source, sx, sy, sw, sh, 0, 0, w, h);
-    ctx.filter = 'none';
-    if (!hasCtxFilter && flt.css !== 'none') applyFilterByHand(ctx, w, h, flt);
-    paintFinish(ctx, w, h, flt);
-
+/** Full-size JPEG, a thumbnail and the ~24px teaser preview of a finished canvas */
+async function finishShot(canvas: HTMLCanvasElement): Promise<CapturedShot> {
+    const w = canvas.width, h = canvas.height;
     const full = await toBlob(canvas, 0.85);
     const ratio = Math.min(1, 480 / w);
     const small = document.createElement('canvas');
@@ -397,11 +336,67 @@ export async function renderShot(
     return { full, thumb, previewUrl: URL.createObjectURL(full), preview };
 }
 
-/** A photo from the guest's library, scaled down like a camera shot */
-export async function shotFromFile(file: File): Promise<CapturedShot> {
+// Where the light leak lands; each photo gets a different corner
+const LEAK_SPOTS: [number, number][] = [[0.96, 0.1], [0.04, 0.92], [0.98, 0.62], [0.08, 0.2], [0.55, 0.98]];
+
+let captureRenderer: FilmRenderer | null | undefined;
+function getCaptureRenderer(): FilmRenderer | null {
+    if (captureRenderer === undefined) captureRenderer = FilmRenderer.create(document.createElement('canvas'));
+    return captureRenderer;
+}
+
+/**
+ * Draws the part of `source` that matches `frameRatio` (width / height) at no more than 1600px, runs
+ * the film look over it and returns the JPEG, a thumbnail and the teaser preview.
+ * `source` should be a video or canvas (WebGL ignores the flip flag for ImageBitmap).
+ */
+export async function renderShot(
+    source: HTMLVideoElement | HTMLCanvasElement,
+    sourceW: number,
+    sourceH: number,
+    frameRatio: number,
+    opts: { filter: FilmLook },
+): Promise<CapturedShot> {
+    // Crop like object-fit: cover
+    let sw = sourceW, sh = sourceH, sx = 0, sy = 0;
+    if (sourceW / sourceH > frameRatio) { sw = sourceH * frameRatio; sx = (sourceW - sw) / 2; }
+    else { sh = sourceW / frameRatio; sy = (sourceH - sh) / 2; }
+
+    const scale = Math.min(1, MAX_SIDE / Math.max(sw, sh));
+    const w = Math.round(sw * scale), h = Math.round(sh * scale);
+    const look = opts.filter;
+
+    const gl = getCaptureRenderer();
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    const ctx = out.getContext('2d')!;
+
+    if (gl) {
+        gl.resize(w, h);
+        // `mirror` is deliberately off: guests see themselves mirrored, the saved photo is how others see them
+        gl.draw(source, sourceW, sourceH, look, { mirror: false, seed: Math.random() * 1000, leakPos: LEAK_SPOTS[Math.floor(Math.random() * LEAK_SPOTS.length)] });
+        ctx.drawImage(gl.canvas, 0, 0);
+    } else {
+        const hasCtxFilter = typeof (ctx as CanvasRenderingContext2D & { filter?: string }).filter === 'string';
+        const css = basicCss(look);
+        if (hasCtxFilter && css !== 'none') ctx.filter = css;
+        ctx.drawImage(source, sx, sy, sw, sh, 0, 0, w, h);
+        ctx.filter = 'none';
+        if (!hasCtxFilter && css !== 'none') applyFilterByHand(ctx, w, h, look);
+        paintFallbackFinish(ctx, w, h, look);
+    }
+    drawStamp(ctx, w, h, look);
+    return finishShot(out);
+}
+
+/** A photo from the guest's library, scaled down like a camera shot and given the chosen look */
+export async function shotFromFile(file: File, look: FilmLook = FILM_LOOKS[0]): Promise<CapturedShot> {
     const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
     try {
-        return await renderShot(bitmap, bitmap.width, bitmap.height, bitmap.width / bitmap.height, { mirror: false, filter: GUEST_FILTERS[0] });
+        const c = document.createElement('canvas');
+        c.width = bitmap.width; c.height = bitmap.height;
+        c.getContext('2d')!.drawImage(bitmap, 0, 0);
+        return await renderShot(c, c.width, c.height, c.width / c.height, { filter: look });
     } finally {
         bitmap.close();
     }

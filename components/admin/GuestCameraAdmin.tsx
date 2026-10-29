@@ -329,7 +329,7 @@ export default function GuestCameraAdmin({ event, accent, printTemplates, onConf
                             <Toggle on={cfg.askName} onChange={v => patch({ askName: v })} accent={accent} title="Ask for a name" hint="Shown on photos in the album, and lets guests be filtered." />
                             <Toggle on={cfg.askTable} onChange={v => patch({ askTable: v })} accent={accent} title="Ask for a table" />
                             <Toggle on={cfg.captionsEnabled} onChange={v => patch({ captionsEnabled: v })} accent={accent} title="Allow captions" />
-                            <Toggle on={cfg.filtersEnabled} onChange={v => patch({ filtersEnabled: v })} accent={accent} title="Film filters" hint="Disposable, vintage, B&W and vivid looks." />
+                            <Toggle on={cfg.filtersEnabled} onChange={v => patch({ filtersEnabled: v })} accent={accent} title="Film camera filters" hint="Film-camera looks guests can pick live: Disposable, Gold 200, Polaroid, Fuji 400, CCD, Camcorder and B&W." />
                             <Toggle on={cfg.allowLibrary} onChange={v => patch({ allowLibrary: v })} accent={accent} title="Allow photos from the library" hint="Off keeps the disposable-camera feel: only live shots." />
                             <Toggle on={cfg.showTeaser} onChange={v => patch({ showTeaser: v })} accent={accent} title="Blurred teaser on the locked album" hint="Guests see a heavily blurred glimpse while they wait. Only tiny previews are shared, never the real photos." />
                             <Toggle on={cfg.slideshowLive} onChange={v => patch({ slideshowLive: v })} accent={accent} title="Live slideshow" hint="Approved photos can appear on a projector before the reveal." />
