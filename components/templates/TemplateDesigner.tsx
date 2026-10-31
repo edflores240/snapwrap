@@ -1247,6 +1247,8 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         if (ids.size === 0) return false;
         const t = templateRef.current;
         const payload = {
+            // Slots and shapes are sized in percent, so keep the template size to paste them at the same pixel size
+            from: { width: t.width, height: t.height },
             slots: t.slots.filter(el => ids.has(el.id)),
             stickers: (t.stickers || []).filter(el => ids.has(el.id)),
             textElements: t.textElements.filter(el => ids.has(el.id)),
@@ -1258,13 +1260,16 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
     }, []);
 
     const pasteClipboard = useCallback(() => {
-        let payload: { slots?: PhotoSlot[]; stickers?: Sticker[]; textElements?: TextElement[]; shapes?: ShapeElement[] } | null = null;
+        let payload: { from?: { width: number; height: number }; slots?: PhotoSlot[]; stickers?: Sticker[]; textElements?: TextElement[]; shapes?: ShapeElement[] } | null = null;
         try { payload = JSON.parse(localStorage.getItem(CLIPBOARD_KEY) || 'null'); } catch { /* ignore */ }
         if (!payload) return;
         const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const shift = 4 * ++pasteCountRef.current;
         const copies: string[] = [];
         const place = <T extends { x: number; y: number }>(el: T) => ({ ...el, x: Math.min(el.x + shift, 96), y: Math.min(el.y + shift, 96), locked: false });
+        const sx = payload.from ? payload.from.width / templateRef.current.width : 1;
+        const sy = payload.from ? payload.from.height / templateRef.current.height : 1;
+        const sized = <T extends { width: number; height: number }>(el: T) => ({ ...el, width: Math.min(el.width * sx, 100), height: Math.min(el.height * sy, 100) });
         setTemplate(prev => {
             let slotNo = prev.slots.reduce((m, el) => Math.max(m, parseInt(el.id.replace(/\D/g, ''), 10) || 0), 0);
             const next = {
@@ -1273,7 +1278,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                     const id = `s${++slotNo}`;
                     copies.push(id);
                     // A pasted slot is a new shot, not another copy of the one it came from
-                    return { ...place(el), id, photo: undefined };
+                    return { ...sized(place(el)), id, photo: undefined };
                 })],
                 stickers: [...(prev.stickers || []), ...(payload!.stickers || []).map((el, i) => {
                     const id = `stk_${stamp}_${i}`;
@@ -1288,7 +1293,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                 shapes: [...(prev.shapes || []), ...(payload!.shapes || []).map((el, i) => {
                     const id = `shp_${stamp}_${i}`;
                     copies.push(id);
-                    return { ...place(el), id };
+                    return { ...sized(place(el)), id };
                 })],
             };
             pushToHistory(next);
@@ -2264,6 +2269,28 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                             ))}
                                                         </select>
                                                         <p className="text-[9px] text-neutral-600 leading-snug">Pick the same number on two slots to print one photo twice, like a strip you cut in half.</p>
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Exact size (px)</label>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            {([['width', 'W', template.width], ['height', 'H', template.height]] as const).map(([key, label, full]) => {
+                                                                const slot = template.slots.find(s => s.id === selectedSlotId);
+                                                                return (
+                                                                    <label key={key} className="flex items-center gap-2 h-9 rounded-xl bg-neutral-950 border border-white/10 px-3 focus-within:border-blue-500/60">
+                                                                        <span className="text-[9px] font-black text-neutral-500">{label}</span>
+                                                                        <input
+                                                                            type="number"
+                                                                            min={1}
+                                                                            max={full}
+                                                                            value={slot ? Math.round(slot[key] / 100 * full) : 0}
+                                                                            onChange={(e) => { const px = +e.target.value; if (px > 0) updateSlot(selectedSlotId, { [key]: Math.min(100, px / full * 100) }); }}
+                                                                            onBlur={() => pushToHistory(templateRef.current)}
+                                                                            className="w-full bg-transparent text-white text-xs font-bold outline-none tabular-nums"
+                                                                        />
+                                                                    </label>
+                                                                );
+                                                            })}
+                                                        </div>
                                                     </div>
                                                     <div className="space-y-3">
                                                         <div className="flex items-center justify-between">
