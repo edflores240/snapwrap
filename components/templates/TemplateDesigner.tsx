@@ -685,6 +685,12 @@ export default function TemplateDesigner({ initialTemplate, onSave, onClose }: T
     }, []);
 
     const previewRef = useRef<HTMLDivElement>(null);
+
+    // Undo/redo can remove elements that are still selected; drop those ids so panels never look up a missing element
+    useEffect(() => {
+        const alive = new Set([...template.slots, ...(template.stickers || []), ...template.textElements, ...(template.shapes || [])].map(el => el.id));
+        setSelectedIds(prev => (prev.every(id => alive.has(id)) ? prev : prev.filter(id => alive.has(id))));
+    }, [template]);
     const [workspaceZoom, setWorkspaceZoom] = useState(1);
 
     // ── Custom Presets Management ──
@@ -1291,7 +1297,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         setSelectedIds(copies);
     }, [pushToHistory]);
 
-    const shotNumber = (slot: PhotoSlot, index: number) => (slot.photo && slot.photo > 0 ? slot.photo : index + 1);
+    const shotNumber = (slot: { photo?: number }, index: number) => (slot.photo && slot.photo > 0 ? slot.photo : index + 1);
 
     /** Swap the photo numbers of two neighbouring groups of slots */
     const swapShots = (a: number[], b: number[]) => {
@@ -2249,7 +2255,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                     <div className="space-y-2">
                                                         <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Shows photo #</label>
                                                         <select
-                                                            value={shotNumber(template.slots.find(s => s.id === selectedSlotId)!, template.slots.findIndex(s => s.id === selectedSlotId))}
+                                                            value={shotNumber(template.slots.find(s => s.id === selectedSlotId) || {}, Math.max(0, template.slots.findIndex(s => s.id === selectedSlotId)))}
                                                             onChange={(e) => { updateSlot(selectedSlotId, { photo: +e.target.value }); pushToHistory(templateRef.current); }}
                                                             className="w-full h-9 rounded-xl bg-neutral-950 border border-white/10 text-white text-xs font-bold px-3"
                                                         >
