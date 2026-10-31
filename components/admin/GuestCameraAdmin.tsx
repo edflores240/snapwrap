@@ -10,6 +10,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import PrintDesigner from '@/components/PrintDesigner';
 import { externalizeDataUrls } from '@/lib/config-assets';
+import { eventFontFamilies, resolveEventTheme } from '@/lib/event-theme';
 import {
     WEDDING_PROMPTS, fromLocalInput, guestUrl, readGuestConfig, toLocalInput,
     type GuestConfig, type GuestPhotoStatus,
@@ -214,34 +215,44 @@ export default function GuestCameraAdmin({ event, accent, printTemplates, onConf
         try { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(null), 1800); } catch { /* clipboard blocked */ }
     };
 
+    // Table cards follow the event's colour scheme and gallery fonts
+    const theme = useMemo(() => resolveEventTheme(event.config), [event.config]);
+    const fonts = useMemo(() => eventFontFamilies(event.config), [event.config]);
+    const card = {
+        eyebrow: cfg.cardEyebrow.trim() || 'Capture the moment',
+        title: cfg.welcomeTitle || event.name,
+        step: cfg.cardStep.trim() || 'Scan to open your camera',
+        note: cfg.cardNote.trim() || (cfg.cardShowShots ? `${cfg.shotsPerGuest} shots each · photos are revealed later` : ''),
+    };
+
     const printCards = async () => {
-        const svg = await QRCode.toString(links.camera, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' });
-        const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
-        const title = esc(cfg.welcomeTitle || event.name);
-        const card = `
+        const svg = await QRCode.toString(links.camera, { type: 'svg', margin: 0, errorCorrectionLevel: 'M', color: { dark: '#111111', light: '#ffffff' } });
+        const esc = (v: string) => v.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+        const { primary, secondary } = theme;
+        const html = `
             <div class="card">
-                <div class="eyebrow">Capture the night</div>
-                <h1>${title}</h1>
+                ${card.eyebrow ? `<div class="eyebrow">${esc(card.eyebrow)}</div>` : ''}
+                <h1>${esc(card.title)}</h1>
                 <div class="qr">${svg}</div>
-                <p class="step">Scan to open your camera</p>
-                <p class="sub">${cfg.shotsPerGuest} shots each · photos are revealed later</p>
+                ${card.step ? `<p class="step">${esc(card.step)}</p>` : ''}
+                ${card.note ? `<p class="sub">${esc(card.note)}</p>` : ''}
             </div>`;
         const w = window.open('', '_blank');
         if (!w) { setError('Allow pop-ups to print the cards.'); return; }
-        w.document.write(`<!doctype html><html><head><title>Table cards</title><style>
+        w.document.write(`<!doctype html><html><head><title>Table cards</title><link rel="stylesheet" href="${fonts.stylesheet}"><style>
             @page { size: A4; margin: 0 }
-            * { box-sizing: border-box }
-            body { margin: 0; font-family: Georgia, serif; color: #2A2724; }
+            * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact }
+            body { margin: 0; font-family: '${fonts.body}', Helvetica, Arial, sans-serif; color: ${primary}; background: ${secondary} }
             .sheet { width: 210mm; height: 297mm; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; page-break-after: always }
-            .card { border: 0.2mm dashed #cfc8ba; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 10mm; gap: 4mm }
-            .eyebrow { font: 700 2.6mm/1 Helvetica, Arial, sans-serif; letter-spacing: 1.2mm; text-transform: uppercase; color: ${accent} }
-            h1 { margin: 0; font-size: 8mm; font-weight: 400; line-height: 1.15 }
-            .qr { width: 44mm; height: 44mm; padding: 3mm; border: 0.4mm solid ${accent}; border-radius: 4mm } .qr svg { width: 100%; height: 100% }
-            .step { margin: 0; font: 700 3.6mm Helvetica, Arial, sans-serif }
-            .sub { margin: 0; font: 3mm Helvetica, Arial, sans-serif; opacity: .6 }
+            .card { background: ${secondary}; outline: 0.2mm dashed ${primary}55; outline-offset: -0.1mm; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 10mm; gap: 4mm }
+            .eyebrow { font: 700 2.6mm/1 '${fonts.body}', Helvetica, Arial, sans-serif; letter-spacing: 1.2mm; text-transform: uppercase; color: ${primary} }
+            h1 { margin: 0; font: 400 8mm/1.15 '${fonts.title}', Georgia, serif; color: ${primary} }
+            .qr { width: 44mm; height: 44mm; padding: 3mm; background: #fff; border: 0.5mm solid ${primary}; border-radius: 4mm } .qr svg { width: 100%; height: 100% }
+            .step { margin: 0; font: 700 3.6mm '${fonts.body}', Helvetica, Arial, sans-serif; color: ${primary} }
+            .sub { margin: 0; font: 3mm '${fonts.body}', Helvetica, Arial, sans-serif; color: ${primary}; opacity: .65 }
             </style></head><body>${Array.from({ length: Math.ceil(cardCount / 4) }).map(() =>
-                `<div class="sheet">${Array.from({ length: 4 }).map(() => card).join('')}</div>`).join('')}
-            <script>window.onload = () => setTimeout(() => window.print(), 200)</script></body></html>`);
+                `<div class="sheet">${Array.from({ length: 4 }).map(() => html).join('')}</div>`).join('')}
+            <script>(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => setTimeout(() => window.print(), 200))</script></body></html>`);
         w.document.close();
     };
 
@@ -545,7 +556,27 @@ export default function GuestCameraAdmin({ event, accent, printTemplates, onConf
                     <div className="space-y-8">
                         <div className="rounded-3xl border border-[#ECE8DF] bg-white p-8 space-y-5">
                             <h3 className="text-lg font-black text-[#2A2724] flex items-center gap-2"><Printer size={18} /> Table cards</h3>
-                            <p className="text-sm text-neutral-500">Four cards to an A4 page, each with the QR code, the event title and how many shots guests get. Cut along the dashed lines.</p>
+                            <p className="text-sm text-neutral-500">Four cards to an A4 page. They use your event&apos;s color scheme and fonts. Cut along the dashed lines.</p>
+                            <link rel="stylesheet" href={fonts.stylesheet} />
+                            <div className="flex justify-center">
+                                <div className="w-full max-w-[260px] aspect-[105/148.5] rounded-sm shadow-md flex flex-col items-center justify-center text-center gap-2.5 p-5" style={{ background: theme.secondary, color: theme.primary, fontFamily: `'${fonts.body}', sans-serif` }}>
+                                    {card.eyebrow && <div className="text-[8px] font-bold uppercase tracking-[0.3em]">{card.eyebrow}</div>}
+                                    <div className="text-2xl leading-tight" style={{ fontFamily: `'${fonts.title}', serif` }}>{card.title}</div>
+                                    <div className="w-24 h-24 bg-white rounded-xl p-2 border-2" style={{ borderColor: theme.primary }}>
+                                        {links.camera && <QRCodeSVG value={links.camera} size={256} level="M" fgColor="#111111" style={{ width: '100%', height: '100%' }} />}
+                                    </div>
+                                    {card.step && <div className="text-[11px] font-bold">{card.step}</div>}
+                                    {card.note && <div className="text-[9px] opacity-65">{card.note}</div>}
+                                </div>
+                            </div>
+                            <div className="space-y-4">
+                                <div className="space-y-1.5"><p className={label}>Top line</p><input className={input} value={cfg.cardEyebrow} onChange={e => patch({ cardEyebrow: e.target.value })} placeholder="Capture the moment" /></div>
+                                <div className="space-y-1.5"><p className={label}>Call to action</p><input className={input} value={cfg.cardStep} onChange={e => patch({ cardStep: e.target.value })} placeholder="Scan to open your camera" /></div>
+                                <div className="space-y-1.5"><p className={label}>Small print</p><input className={input} value={cfg.cardNote} onChange={e => patch({ cardNote: e.target.value })} placeholder={`${cfg.shotsPerGuest} shots each · photos are revealed later`} /></div>
+                                <Toggle on={cfg.cardShowShots} onChange={v => patch({ cardShowShots: v })} accent={accent} title="Show the shot count" hint="Used when the small print above is empty." />
+                                <p className="text-xs text-neutral-400">The title comes from Setup → Messages. Colors and fonts follow the color scheme bar above the tabs. Leave a line empty to use its default.</p>
+                                <button onClick={() => save({ ...cfg })} disabled={saving} className="px-5 py-2.5 rounded-xl border border-[#2A2724] text-[#2A2724] text-[10px] font-black uppercase tracking-widest disabled:opacity-40">Save card text</button>
+                            </div>
                             <div className="flex items-center gap-3">
                                 <p className={label}>Cards</p>
                                 <input type="number" min={4} step={4} value={cardCount} onChange={e => setCardCount(Math.max(4, +e.target.value || 4))} className="w-24 bg-white border border-[#ECE8DF] rounded-lg px-3 py-2 text-sm tabular-nums" />

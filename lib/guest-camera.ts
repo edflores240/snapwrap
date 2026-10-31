@@ -31,6 +31,11 @@ export interface GuestConfig {
     welcomeTitle: string;
     welcomeMessage: string;
     thankYouMessage: string;
+    /** Printed table cards. Empty strings fall back to the defaults. */
+    cardEyebrow: string;
+    cardStep: string;
+    cardNote: string;
+    cardShowShots: boolean;
 }
 
 export const DEFAULT_GUEST_CONFIG: GuestConfig = {
@@ -51,6 +56,10 @@ export const DEFAULT_GUEST_CONFIG: GuestConfig = {
     welcomeTitle: '',
     welcomeMessage: '',
     thankYouMessage: '',
+    cardEyebrow: '',
+    cardStep: '',
+    cardNote: '',
+    cardShowShots: true,
 };
 
 export const WEDDING_PROMPTS = [

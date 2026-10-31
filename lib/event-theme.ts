@@ -66,3 +66,27 @@ export function accentOnDark(theme: ColorScheme): string {
     if (brightness(theme.secondary) > 0.28) return theme.secondary;
     return '#ffffff';
 }
+
+// ── Print fonts ────────────────────────────────────────────────────────────
+
+const GOOGLE_FAMILIES: Record<string, string> = {
+    playfair: 'Playfair Display', inter: 'Inter', anton: 'Anton', bodoni: 'Bodoni Moda', space: 'Space Grotesk',
+    caveat: 'Caveat', syne: 'Syne', bebas: 'Bebas Neue', montserrat: 'Montserrat', outfit: 'Outfit',
+};
+
+/** Title and body font of each gallery design style, mirroring THEMES in gallery-typography */
+const STYLE_FONTS: Record<string, [string, string]> = {
+    modern: ['playfair', 'inter'], valentine: ['playfair', 'inter'], minimal: ['inter', 'inter'], dark: ['playfair', 'inter'],
+    retro: ['anton', 'space'], editorial: ['bodoni', 'inter'], neon: ['syne', 'space'], organic: ['playfair', 'inter'],
+    serenity: ['outfit', 'inter'], industrial: ['bebas', 'space'], vibrant: ['anton', 'montserrat'],
+};
+
+/** Google font families the event's gallery uses, for pages that can't use next/font (printed cards) */
+export function eventFontFamilies(config: Config): { title: string; body: string; stylesheet: string } {
+    const style = config?.publicPage?.themeStyle ?? 'modern';
+    const [titleKey, bodyKey] = STYLE_FONTS[style] ?? STYLE_FONTS.modern;
+    const title = GOOGLE_FAMILIES[config?.publicPage?.headingFont] ?? GOOGLE_FAMILIES[titleKey];
+    const body = GOOGLE_FAMILIES[bodyKey];
+    const query = [...new Set([title, body])].map(f => `family=${f.replace(/ /g, '+')}:wght@400;700`).join('&');
+    return { title, body, stylesheet: `https://fonts.googleapis.com/css2?${query}&display=swap` };
+}
