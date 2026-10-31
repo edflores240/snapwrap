@@ -20,6 +20,7 @@ import TemplateTextBody from './TemplateTextBody';
 import FontPicker from './FontPicker';
 import SelectionBox, { ALL_HANDLES, SIDE_HANDLES } from './SelectionBox';
 import { useTemplateFonts } from '@/lib/fonts';
+import { shotGroups } from '@/lib/template-shots';
 import { removeBackground, type BackgroundRemovalProgress } from '@/lib/background-removal';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -75,6 +76,8 @@ interface PhotoSlot {
     opacity?: number;
     borderRadius?: number; // px override; falls back to global template.borderRadius
     clipShape?: 'circle';  // if set, renders as ellipse
+    /** Which booth shot fills this slot (1-based). Defaults to the slot's position; two slots with the same number show the same photo. */
+    photo?: number;
 }
 
 export interface ShapeElement {
@@ -588,6 +591,8 @@ function kindOf(id: string): ElementKind {
 const TAB_FOR_KIND: Record<ElementKind, DesignTab> = { slot: 'layout', text: 'text', sticker: 'stickers', shape: 'shapes' };
 
 // ─── Component ──────────────────────────────────────────────────────────────
+
+const CLIPBOARD_KEY = 'snapwrap.templateClipboard';
 
 export default function TemplateDesigner({ initialTemplate, onSave, onClose }: TemplateDesignerProps) {
     const [template, setTemplate] = useState<TemplateConfig>(() => {
@@ -1205,7 +1210,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                 slots: [...prev.slots, ...prev.slots.filter(el => ids.has(el.id)).map(el => {
                     const id = `s${++slotNo}`;
                     copies.push(id);
-                    return { ...offset(el), id };
+                    return { ...offset(el), id, photo: undefined };
                 })],
                 stickers: [...(prev.stickers || []), ...(prev.stickers || []).filter(el => ids.has(el.id)).map((el, i) => {
                     const id = `stk_${stamp}_${i}`;
@@ -1228,6 +1233,78 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
         });
         setSelectedIds(copies);
     }, [pushToHistory]);
+
+    // ── Copy / paste (also between templates: the clipboard lives in localStorage) ──
+    const pasteCountRef = useRef(0);
+    const copySelected = useCallback(() => {
+        const ids = new Set(selectedIdsRef.current);
+        if (ids.size === 0) return false;
+        const t = templateRef.current;
+        const payload = {
+            slots: t.slots.filter(el => ids.has(el.id)),
+            stickers: (t.stickers || []).filter(el => ids.has(el.id)),
+            textElements: t.textElements.filter(el => ids.has(el.id)),
+            shapes: (t.shapes || []).filter(el => ids.has(el.id)),
+        };
+        try { localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(payload)); } catch { /* storage blocked */ }
+        pasteCountRef.current = 0;
+        return true;
+    }, []);
+
+    const pasteClipboard = useCallback(() => {
+        let payload: { slots?: PhotoSlot[]; stickers?: Sticker[]; textElements?: TextElement[]; shapes?: ShapeElement[] } | null = null;
+        try { payload = JSON.parse(localStorage.getItem(CLIPBOARD_KEY) || 'null'); } catch { /* ignore */ }
+        if (!payload) return;
+        const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const shift = 4 * ++pasteCountRef.current;
+        const copies: string[] = [];
+        const place = <T extends { x: number; y: number }>(el: T) => ({ ...el, x: Math.min(el.x + shift, 96), y: Math.min(el.y + shift, 96), locked: false });
+        setTemplate(prev => {
+            let slotNo = prev.slots.reduce((m, el) => Math.max(m, parseInt(el.id.replace(/\D/g, ''), 10) || 0), 0);
+            const next = {
+                ...prev,
+                slots: [...prev.slots, ...(payload!.slots || []).map(el => {
+                    const id = `s${++slotNo}`;
+                    copies.push(id);
+                    // A pasted slot is a new shot, not another copy of the one it came from
+                    return { ...place(el), id, photo: undefined };
+                })],
+                stickers: [...(prev.stickers || []), ...(payload!.stickers || []).map((el, i) => {
+                    const id = `stk_${stamp}_${i}`;
+                    copies.push(id);
+                    return { ...place(el), id };
+                })],
+                textElements: [...prev.textElements, ...(payload!.textElements || []).map((el, i) => {
+                    const id = `txt_${stamp}_${i}`;
+                    copies.push(id);
+                    return { ...place(el), id };
+                })],
+                shapes: [...(prev.shapes || []), ...(payload!.shapes || []).map((el, i) => {
+                    const id = `shp_${stamp}_${i}`;
+                    copies.push(id);
+                    return { ...place(el), id };
+                })],
+            };
+            pushToHistory(next);
+            return next;
+        });
+        setSelectedIds(copies);
+    }, [pushToHistory]);
+
+    const shotNumber = (slot: PhotoSlot, index: number) => (slot.photo && slot.photo > 0 ? slot.photo : index + 1);
+
+    /** Swap the photo numbers of two neighbouring groups of slots */
+    const swapShots = (a: number[], b: number[]) => {
+        const t = templateRef.current;
+        const noA = shotNumber(t.slots[a[0]], a[0]);
+        const noB = shotNumber(t.slots[b[0]], b[0]);
+        const next = {
+            ...t,
+            slots: t.slots.map((s, i) => a.includes(i) ? { ...s, photo: noB } : b.includes(i) ? { ...s, photo: noA } : s),
+        };
+        setTemplate(next);
+        pushToHistory(next);
+    };
 
     const toggleLockSelected = useCallback(() => {
         const ids = new Set(selectedIdsRef.current);
@@ -1545,6 +1622,13 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
             } else if (mod && e.key.toLowerCase() === 'd') {
                 e.preventDefault();
                 duplicateSelected();
+            } else if (mod && e.key.toLowerCase() === 'c') {
+                if (copySelected()) e.preventDefault();
+            } else if (mod && e.key.toLowerCase() === 'x') {
+                if (copySelected()) { e.preventDefault(); deleteSelected(); }
+            } else if (mod && e.key.toLowerCase() === 'v') {
+                e.preventDefault();
+                pasteClipboard();
             } else if (e.key === 'Escape') {
                 setSelectedIds([]);
             } else if (e.key.startsWith('Arrow') && selectedIdsRef.current.length > 0) {
@@ -1572,7 +1656,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [undo, redo, deleteSelected, duplicateSelected, elementList, findElement, pushToHistory]);
+    }, [undo, redo, deleteSelected, duplicateSelected, copySelected, pasteClipboard, elementList, findElement, pushToHistory]);
 
     const describeProgress = (p: BackgroundRemovalProgress) =>
         p.stage === 'download'
@@ -2128,6 +2212,30 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                             </button>
                                         </div>
 
+                                        {template.slots.length > 1 && (
+                                            <div className="bg-neutral-900/50 border border-white/5 rounded-2xl p-4 space-y-3">
+                                                <div>
+                                                    <span className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Photo order</span>
+                                                    <p className="text-[9px] text-neutral-600 mt-1 leading-snug">The order guests take their photos. Slots that share a number show the same photo.</p>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    {shotGroups(template.slots).map((group, n, all) => (
+                                                        <div key={n} className="flex items-center gap-2 bg-neutral-950/60 border border-white/5 rounded-xl px-2 py-1.5">
+                                                            <span className="w-5 h-5 rounded-md bg-blue-500 text-white text-[9px] font-black flex items-center justify-center shrink-0">{n + 1}</span>
+                                                            <button
+                                                                onClick={() => setSelectedIds(group.map(i => template.slots[i].id))}
+                                                                className="flex-1 min-w-0 text-left text-[9px] font-bold text-neutral-300 truncate hover:text-white"
+                                                            >
+                                                                {group.map(i => template.slots[i].id).join(' + ')}{group.length > 1 ? ' · same photo' : ''}
+                                                            </button>
+                                                            <button disabled={n === 0} onClick={() => swapShots(all[n - 1], group)} className="text-neutral-500 hover:text-white disabled:opacity-20" aria-label="Move earlier"><ArrowUp size={12} /></button>
+                                                            <button disabled={n === all.length - 1} onClick={() => swapShots(group, all[n + 1])} className="text-neutral-500 hover:text-white disabled:opacity-20" aria-label="Move later"><ArrowDown size={12} /></button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {selectedSlotId && (
                                             <div className="bg-neutral-900/50 border border-white/5 rounded-2xl p-4 space-y-6">
                                                 <div className="flex items-center justify-between">
@@ -2138,6 +2246,19 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                                 </div>
 
                                                 <div className="space-y-4">
+                                                    <div className="space-y-2">
+                                                        <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Shows photo #</label>
+                                                        <select
+                                                            value={shotNumber(template.slots.find(s => s.id === selectedSlotId)!, template.slots.findIndex(s => s.id === selectedSlotId))}
+                                                            onChange={(e) => { updateSlot(selectedSlotId, { photo: +e.target.value }); pushToHistory(templateRef.current); }}
+                                                            className="w-full h-9 rounded-xl bg-neutral-950 border border-white/10 text-white text-xs font-bold px-3"
+                                                        >
+                                                            {Array.from({ length: template.slots.length }, (_, k) => k + 1).map(n => (
+                                                                <option key={n} value={n}>Photo {n}{template.slots.filter((s, i) => shotNumber(s, i) === n).length > 0 ? '' : ' (unused)'}</option>
+                                                            ))}
+                                                        </select>
+                                                        <p className="text-[9px] text-neutral-600 leading-snug">Pick the same number on two slots to print one photo twice, like a strip you cut in half.</p>
+                                                    </div>
                                                     <div className="space-y-3">
                                                         <div className="flex items-center justify-between">
                                                             <label className="text-[8px] font-black text-neutral-500 uppercase tracking-widest">Width (%)</label>
@@ -3118,7 +3239,7 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                                         >
                                             <div className="flex flex-col items-center gap-2">
                                                 <ImageIcon size={24} className="text-white/20 group-hover:text-white/40 transition-colors" />
-                                                <span className="text-[7px] font-black text-white/20 uppercase tracking-[0.2em]">{slot.id}</span>
+                                                <span className="text-[7px] font-black text-white/30 uppercase tracking-[0.2em]">Photo {shotNumber(slot, template.slots.indexOf(slot))}</span>
                                             </div>
                                             {slot.locked && (
                                                 <div className="absolute top-1 right-1 text-white/30"><Lock size={10} /></div>
@@ -3322,6 +3443,9 @@ function useResizable(containerRef: React.RefObject<HTMLDivElement | null>, onRe
                             </div>
                             <div className="flex items-center gap-2 text-[8px] font-black text-neutral-500 uppercase tracking-[0.2em]">
                                 <RotateCw size={10} /> Drag outside a corner to rotate
+                            </div>
+                            <div className="flex items-center gap-2 text-[8px] font-black text-neutral-500 uppercase tracking-[0.2em]">
+                                <Copy size={10} /> Ctrl+C / X / V copy, cut and paste, even into another template
                             </div>
                             <div className="flex items-center gap-2 text-[8px] font-black text-neutral-500 uppercase tracking-[0.2em]">
                                 <Layers size={10} /> Right-click for options

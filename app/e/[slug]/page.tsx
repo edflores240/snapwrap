@@ -1,5 +1,6 @@
 'use client';
 
+import { shotGroups, groupOfSlot } from '@/lib/template-shots';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
@@ -384,7 +385,7 @@ export default function PublicBoothPage() {
             scale: 1,
             zIndex: i + 10
         })));
-        setCurrentSlotIndex(0);
+        setCurrentSlotIndex(shotGroups(tpl.slots)[0]?.[0] ?? 0);
         setCaptureSubState('live');
         setStep('mirror');
         await startCamera();
@@ -424,7 +425,7 @@ export default function PublicBoothPage() {
                     if (photo) {
                         setCapturedPhotos(prev => {
                             const next = [...prev];
-                            next[currentSlotIndex] = photo;
+                            groupOfSlot(shotGroups(selectedTemplate?.slots), currentSlotIndex).forEach(i => { next[i] = photo; });
                             return next;
                         });
                     }
@@ -434,7 +435,7 @@ export default function PublicBoothPage() {
         };
 
         countdownRef.current = setTimeout(tick, 1000);
-    }, [captureSubState, boothSettings.countdownSeconds, takePhoto, currentSlotIndex]);
+    }, [captureSubState, boothSettings.countdownSeconds, takePhoto, currentSlotIndex, selectedTemplate]);
 
     /**
      * handleKeepSlot — user happy with the current photo.
@@ -442,8 +443,10 @@ export default function PublicBoothPage() {
      */
     const handleKeepSlot = useCallback(() => {
         if (!selectedTemplate) return;
-        const nextIndex = currentSlotIndex + 1;
-        if (nextIndex >= selectedTemplate.slots.length) {
+        const groups = shotGroups(selectedTemplate.slots);
+        const at = groups.findIndex(g => g.includes(currentSlotIndex));
+        const nextIndex = groups[at + 1]?.[0] ?? -1;
+        if (nextIndex < 0) {
             // All done → review
             setStep('review');
             stopCamera();
@@ -467,12 +470,12 @@ export default function PublicBoothPage() {
         setAutoKeepProgress(0);
         setCapturedPhotos(prev => {
             const next = [...prev];
-            next[currentSlotIndex] = '';
+            groupOfSlot(shotGroups(selectedTemplate?.slots), currentSlotIndex).forEach(i => { next[i] = ''; });
             return next;
         });
         setCountdown(null);
         setCaptureSubState('live');
-    }, [currentSlotIndex]);
+    }, [currentSlotIndex, selectedTemplate]);
 
     /** Auto-keep: once a photo is in preview, auto-advance after 2.5s */
     const AUTO_KEEP_MS = 10000;
@@ -507,7 +510,7 @@ export default function PublicBoothPage() {
     /** Full retake from the review screen — goes back to slot 0. */
     const handleRetake = async () => {
         setCapturedPhotos([]);
-        setCurrentSlotIndex(0);
+        setCurrentSlotIndex(shotGroups(selectedTemplate?.slots)[0]?.[0] ?? 0);
         setCaptureSubState('live');
         setDownloadUrl(null);
         setStep('capture');
@@ -1099,16 +1102,16 @@ const handleFallbackDownload = (dataUrl: string) => {
                             <div className="w-full max-w-2xl mb-4">
                                 <div className="flex items-center justify-between mb-2">
                                     <h2 className="text-[11px] font-black text-white uppercase tracking-[0.3em]">
-                                        Sequence <span style={{ color: tc }}>{currentSlotIndex + 1}</span> / {selectedTemplate.slots.length}
+                                        Sequence <span style={{ color: tc }}>{shotGroups(selectedTemplate.slots).findIndex(g => g.includes(currentSlotIndex)) + 1}</span> / {shotGroups(selectedTemplate.slots).length}
                                     </h2>
                                     <span className="text-[9px] font-black text-neutral-500 uppercase tracking-widest">
                                         {captureSubState === 'countdown' ? 'Arming System...' : captureSubState === 'preview' ? 'Verify Capture' : 'Ready for Input'}
                                     </span>
                                 </div>
                                 <div className="flex gap-2">
-                                    {selectedTemplate.slots.map((_: any, i: number) => (
+                                    {shotGroups(selectedTemplate.slots).map((g, n) => { const i = g[0]; return (
                                         <div
-                                            key={i}
+                                            key={n}
                                             className="h-2 flex-1 rounded-full transition-all duration-500"
                                             style={{
                                                 background: capturedPhotos[i]
@@ -1118,7 +1121,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                                         : 'rgba(255,255,255,0.1)',
                                             }}
                                         />
-                                    ))}
+                                    ); })}
                                 </div>
                             </div>
 
@@ -1160,7 +1163,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     if (item.type === 'slot') {
                                         const slot = item.data;
                                         const i = item.slotIndex!;
-                                        const isCurrent = i === currentSlotIndex;
+                                        const isCurrent = groupOfSlot(shotGroups(selectedTemplate.slots), currentSlotIndex).includes(i);
                                         const showCamera = isCurrent && (captureSubState === 'live' || captureSubState === 'countdown') && !capturedPhotos[i];
                                         return (
                                             <div
@@ -1492,7 +1495,7 @@ const handleFallbackDownload = (dataUrl: string) => {
                                                 READY
                                             </span>
                                             <span className="text-[10px] font-black uppercase tracking-widest text-white/80">
-                                                {currentSlotIndex + 1 >= selectedTemplate.slots.length
+                                                {shotGroups(selectedTemplate.slots).at(-1)?.includes(currentSlotIndex)
                                                     ? 'Finalize Sequence'
                                                     : 'Continue Protocol'}
                                             </span>
@@ -1511,9 +1514,9 @@ const handleFallbackDownload = (dataUrl: string) => {
 
                         {/* Thumbnail strip — active slot auto-scrolls into view */}
                         <div className="flex gap-3 mt-5 overflow-x-auto pb-1 max-w-full" style={{ scrollbarWidth: 'none' }}>
-                            {selectedTemplate.slots.map((_: any, i: number) => (
+                            {shotGroups(selectedTemplate.slots).map((g, n) => { const i = g[0]; return (
                                 <div
-                                    key={i}
+                                    key={n}
                                     ref={(el) => {
                                         if (el && i === currentSlotIndex) {
                                             el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
@@ -1539,10 +1542,10 @@ const handleFallbackDownload = (dataUrl: string) => {
                                     {capturedPhotos[i] ? (
                                         <img src={capturedPhotos[i]} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
                                     ) : (
-                                        <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-600 text-xs font-bold">{i + 1}</div>
+                                        <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-600 text-xs font-bold">{n + 1}</div>
                                     )}
                                 </div>
-                            ))}
+                            ); })}
                         </div>
                     </div>
                     );
@@ -1933,9 +1936,10 @@ const handleFallbackDownload = (dataUrl: string) => {
                             <button 
                                 onClick={() => {
                                     const newPhotos = [...capturedPhotos];
-                                    newPhotos[contextMenu.index] = null as any;
+                                    const group = groupOfSlot(shotGroups(selectedTemplate?.slots), contextMenu.index);
+                                    group.forEach(i => { newPhotos[i] = null as any; });
                                     setCapturedPhotos(newPhotos);
-                                    setCurrentSlotIndex(contextMenu.index);
+                                    setCurrentSlotIndex(group[0]);
                                     setStep('capture');
                                     setCaptureSubState('live');
                                     setContextMenu(null);
