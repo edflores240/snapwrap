@@ -198,7 +198,7 @@ export default function PortfolioSection({ items, accent, accentContrast, t, hea
                     <div className="grid md:grid-cols-[3fr_1fr] gap-3 mb-3">
                         {/* Hero card with title overlay */}
                         <motion.div {...fadeUp(0.05)}>
-                            <Link href={`/e/${hero.slug}`} className="block group relative rounded-3xl overflow-hidden" style={{ aspectRatio: '4/3' }}>
+                            <Link href={`/e/${hero.slug}/gallery`} className="block group relative rounded-3xl overflow-hidden" style={{ aspectRatio: '4/3' }}>
                                 {hero.thumbnail && (
                                     <Image src={hero.thumbnail} alt={hero.name} fill
                                         className="object-cover transition-transform duration-700 group-hover:scale-105" />
@@ -324,7 +324,7 @@ export default function PortfolioSection({ items, accent, accentContrast, t, hea
 
                     {/* Hero banner */}
                     <motion.div {...fadeUp(0.05)} className="mb-4">
-                        <Link href={`/e/${hero.slug}`} className="block group">
+                        <Link href={`/e/${hero.slug}/gallery`} className="block group">
                             <div className="relative rounded-3xl overflow-hidden" style={{ aspectRatio: '21/9' }}>
                                 {hero.thumbnail && (
                                     <Image src={hero.thumbnail} alt={hero.name} fill
