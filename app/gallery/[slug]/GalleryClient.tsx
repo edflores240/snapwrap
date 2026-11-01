@@ -9,6 +9,7 @@ import { resolveEventTheme } from '@/lib/event-theme';
 import ImageViewer, { viewerButton, viewerButtonPrimary } from '@/components/ui/ImageViewer';
 import Link from 'next/link';
 import { Download, Printer, Images, Lock } from 'lucide-react';
+import { downloadImage } from '@/lib/download-file';
 import { PRINT_WHEN_READY } from '@/lib/print-ready';
 
 export interface Event {
@@ -68,22 +69,7 @@ export default function GalleryClient({ initialEvent, initialPhotos, initialTota
 
     const handleDownload = async (url: string, id: string) => {
         setDownloadingId(id);
-        try {
-            const response = await fetch(url);
-            const blob = await response.blob();
-            const blobUrl = window.URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = blobUrl;
-            link.download = `snapwrap-${id}.jpg`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(blobUrl);
-        } catch (error) {
-            window.open(url, '_blank');
-        } finally {
-            setDownloadingId(null);
-        }
+        try { await downloadImage(url, `snapwrap-${id}.jpg`); } finally { setDownloadingId(null); }
     };
 
     const executePrint = (url: string) => {
@@ -95,6 +81,7 @@ export default function GalleryClient({ initialEvent, initialPhotos, initialTota
                     <title>SnapWrap Print</title>
                     <style>
                         @page { margin: 0; size: 4in 6in; }
+                        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
                         body { margin: 0; display: flex; align-items: center; justify-content: center; height: 6in; width: 4in; background: white; }
                         img { max-width: 100%; max-height: 100%; object-fit: contain; }
                     </style>

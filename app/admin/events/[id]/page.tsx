@@ -48,6 +48,7 @@ import { applyColorScheme, resolveEventTheme, type ColorScheme } from '@/lib/eve
 import ImageViewer, { viewerButton, viewerButtonPrimary } from '@/components/ui/ImageViewer';
 import { applyReplacements, externalizeDataUrls, hasDataUrls, uploadDataUrls } from '@/lib/config-assets';
 import PrintDesigner from '@/components/PrintDesigner';
+import { downloadImage } from '@/lib/download-file';
 import GalleryPreview from '@/components/admin/GalleryPreview';
 import Segmented from '@/components/admin/Segmented';
 import { MOTION_OPTIONS, PATTERN_OPTIONS } from '@/lib/gallery-effects';
@@ -463,23 +464,7 @@ export default function EventDetailPage() {
 
     const handleDownload = async (url: string, id: string) => {
         setDownloadingId(id);
-        try {
-            const response = await fetch(url);
-            const blob = await response.blob();
-            const blobUrl = window.URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = blobUrl;
-            link.download = `snapwrap-${id}.jpg`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(blobUrl);
-        } catch (error) {
-            console.error('Download failed:', error);
-            window.open(url, '_blank');
-        } finally {
-            setDownloadingId(null);
-        }
+        try { await downloadImage(url, `snapwrap-${id}.jpg`); } finally { setDownloadingId(null); }
     };
 
     const handleShareAction = (type: 'copy' | 'gmail' | 'messenger' | 'whatsapp') => {

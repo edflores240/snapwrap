@@ -1,5 +1,6 @@
 'use client';
 
+import { downloadImage } from '@/lib/download-file';
 import React, { useEffect, useState, useRef, type CSSProperties } from 'react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
@@ -134,23 +135,7 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
     const handleDownload = async (url: string) => {
         if (!url || downloading) return;
         setDownloading(true);
-        try {
-            const response = await fetch(url);
-            const blob = await response.blob();
-            const objectUrl = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = objectUrl;
-            link.download = `snapwrap-${Date.now()}.jpg`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(objectUrl);
-        } catch (error) {
-            // Fallback: open in new tab
-            window.open(url, '_blank');
-        } finally {
-            setDownloading(false);
-        }
+        try { await downloadImage(url, `snapwrap-${Date.now()}.jpg`); } finally { setDownloading(false); }
     };
 
     // Fix: Using 6 duplicates to ensure we have enough width
@@ -470,12 +455,7 @@ export default function GalleryClient({ initialEvent, initialPhotos }: Props) {
                 loop
                 actions={(item) => (
                     <button
-                        onClick={() => {
-                            const link = document.createElement('a');
-                            link.href = item.src;
-                            link.download = `snapwrap-${item.id}.jpg`;
-                            link.click();
-                        }}
+                        onClick={() => downloadImage(item.src, `snapwrap-${item.id}.jpg`)}
                         className={viewerButtonPrimary}
                     >
                         <Download size={16} /> Download

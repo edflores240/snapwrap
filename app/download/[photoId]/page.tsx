@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import Logo from '@/components/ui/Logo';
+import { downloadImage } from '@/lib/download-file';
 
 interface PhotoData {
     id: string;
@@ -58,23 +59,7 @@ export default function DownloadPage() {
     const handleDownload = async () => {
         if (!photo?.image_url) return;
         setDownloading(true);
-        try {
-            const response = await fetch(photo.image_url);
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `snapwrap-${photo.id.slice(0, 8)}.jpg`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-        } catch {
-            // Fallback: open in new tab
-            window.open(photo.image_url, '_blank');
-        } finally {
-            setDownloading(false);
-        }
+        try { await downloadImage(photo.image_url, `snapwrap-${photo.id.slice(0, 8)}.jpg`); } finally { setDownloading(false); }
     };
 
     if (loading) {

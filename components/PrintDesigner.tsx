@@ -533,6 +533,7 @@ export default function PrintDesigner({
         if (!w) return;
         w.document.write(`<html><head><title>SnapWrap Print</title><style>
             @page{margin:0;size:${paper.width}mm ${paper.height}mm}
+            *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
             body{margin:0;padding:0;background:white}
             .page{width:${paper.width}mm;height:${paper.height}mm;position:relative;overflow:hidden;page-break-after:always;background:white}
             .item{position:absolute;overflow:hidden}

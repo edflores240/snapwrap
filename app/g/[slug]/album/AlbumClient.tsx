@@ -1,5 +1,6 @@
 'use client';
 
+import { downloadImage } from '@/lib/download-file';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -100,16 +101,7 @@ export default function AlbumClient({ event }: { event: GuestEvent }) {
         }
     };
 
-    const saveOne = async (photo: { id: string; src: string }) => {
-        try {
-            const blob = await (await fetch(photo.src)).blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = `${event.slug}-${photo.id.slice(0, 8)}.jpg`;
-            document.body.appendChild(a); a.click(); a.remove();
-            URL.revokeObjectURL(url);
-        } catch { window.open(photo.src, '_blank'); }
-    };
+    const saveOne = (photo: { id: string; src: string }) => downloadImage(photo.src, `${event.slug}-${photo.id.slice(0, 8)}.jpg`);
 
     const downloadAll = async () => {
         if (!visitorId || zip) return;
