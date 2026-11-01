@@ -11,6 +11,7 @@ import {
     MoveHorizontal, MoveVertical
 } from 'lucide-react';
 import Image from 'next/image';
+import { PRINT_WHEN_READY } from '@/lib/print-ready';
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
 
@@ -193,7 +194,7 @@ export default function PrintDesigner({
         setPages([{ id: 'p1', items: initial }]);
         setNextZ(initial.length + 1);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedPhotos]);
+    }, []);
 
     // Initial history push
     useEffect(() => {
@@ -536,7 +537,7 @@ export default function PrintDesigner({
             .page{width:${paper.width}mm;height:${paper.height}mm;position:relative;overflow:hidden;page-break-after:always;background:white}
             .item{position:absolute;overflow:hidden}
             img{width:100%;height:100%}
-        </style></head><body onload="window.print();setTimeout(()=>window.close(),1200);">
+        </style></head><body>
             ${pages.map(pg => `<div class="page">${[...pg.items].sort((a, b) => a.zIndex - b.zIndex).map(it =>
             `<div class="item" style="left:${it.x}mm;top:${it.y}mm;width:${it.width}mm;height:${it.height}mm;transform:rotate(${it.rotation}deg);z-index:${it.zIndex}">
                         <div style="width:100%;height:100%;position:relative;overflow:hidden">
@@ -545,7 +546,7 @@ export default function PrintDesigner({
                     </div>`
         ).join('')
             }</div>`).join('')}
-        </body></html>`);
+        ${PRINT_WHEN_READY}</body></html>`);
         w.document.close();
     };
 

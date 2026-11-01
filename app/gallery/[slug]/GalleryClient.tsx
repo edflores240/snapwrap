@@ -9,6 +9,7 @@ import { resolveEventTheme } from '@/lib/event-theme';
 import ImageViewer, { viewerButton, viewerButtonPrimary } from '@/components/ui/ImageViewer';
 import Link from 'next/link';
 import { Download, Printer, Images, Lock } from 'lucide-react';
+import { PRINT_WHEN_READY } from '@/lib/print-ready';
 
 export interface Event {
     id: string;
@@ -98,8 +99,9 @@ export default function GalleryClient({ initialEvent, initialPhotos, initialTota
                         img { max-width: 100%; max-height: 100%; object-fit: contain; }
                     </style>
                 </head>
-                <body onload="window.print(); setTimeout(() => window.close(), 1000);">
+                <body>
                     <img src="${url}" />
+                    ${PRINT_WHEN_READY}
                 </body>
             </html>
         `);

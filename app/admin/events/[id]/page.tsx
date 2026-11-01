@@ -275,6 +275,7 @@ export default function EventDetailPage() {
     // Bulk actions
     const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
     const [showPrintDesigner, setShowPrintDesigner] = useState(false);
+    const [singlePrint, setSinglePrint] = useState<{ id: string; url: string } | null>(null);
     const [isConfirmingBulkDelete, setIsConfirmingBulkDelete] = useState(false);
 
     useEffect(() => {
@@ -453,38 +454,11 @@ export default function EventDetailPage() {
         }
     };
 
-    const executePrint = (url: string) => {
-        const printWindow = window.open('', '_blank');
-        if (!printWindow) return;
-        printWindow.document.write(`
-            <html>
-                <head>
-                    <title>SnapWrap Print</title>
-                    <style>
-                        @page { margin: 0; size: 4in 6in; }
-                        body { 
-                            margin: 0; 
-                            padding: 0; 
-                            display: flex; 
-                            align-items: center; 
-                            justify-content: center; 
-                            height: 6in; 
-                            width: 4in; 
-                            background: white; 
-                        }
-                        img { 
-                            max-width: 100%; 
-                            max-height: 100%; 
-                            object-fit: contain; 
-                        }
-                    </style>
-                </head>
-                <body onload="window.print(); setTimeout(() => window.close(), 1000);">
-                    <img src="${url}" />
-                </body>
-            </html>
-        `);
-        printWindow.document.close();
+    /** Print one photo from the viewer: open it in the print studio instead of sending it straight to the printer */
+    const openPrintStudio = (photo: { id: string; url: string }) => {
+        setSinglePrint(photo);
+        setPreviewIndex(null);
+        setShowPrintDesigner(true);
     };
 
     const handleDownload = async (url: string, id: string) => {
@@ -539,6 +513,7 @@ export default function EventDetailPage() {
     };
 
     const handleBulkPrint = () => {
+        setSinglePrint(null);
         setShowPrintDesigner(true);
     };
 
@@ -1385,7 +1360,7 @@ export default function EventDetailPage() {
                 onNearEnd={hasMorePhotos && !loadingPhotos ? () => fetchPhotos(photoPage + 1) : undefined}
                 actions={(item) => (
                     <>
-                        <button onClick={() => executePrint(item.src)} className={viewerButton}><Printer size={16} /> Print</button>
+                        <button onClick={() => openPrintStudio({ id: item.id, url: item.src })} className={viewerButton}><Printer size={16} /> Print</button>
                         <button onClick={() => handleDownload(item.src, 'preview')} disabled={downloadingId === 'preview'} className={viewerButtonPrimary}>
                             {downloadingId === 'preview' ? <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" /> : <Download size={16} />}
                             {downloadingId === 'preview' ? 'Downloading…' : 'Download original'}
@@ -1494,7 +1469,7 @@ export default function EventDetailPage() {
                 )}
                 {showPrintDesigner && (
                     <PrintDesigner 
-                        selectedPhotos={boothPhotos.filter(p => selectedPhotos.includes(p.id)).map(p => ({
+                        selectedPhotos={singlePrint ? [singlePrint] : boothPhotos.filter(p => selectedPhotos.includes(p.id)).map(p => ({
                             id: p.id,
                             url: p.image_url
                         }))}
@@ -1511,7 +1486,7 @@ export default function EventDetailPage() {
                             padding: t.padding,
                             background: t.background
                         }))}
-                        onClose={() => setShowPrintDesigner(false)}
+                        onClose={() => { setShowPrintDesigner(false); setSinglePrint(null); }}
                         themeColor={boothSettings.themeColor}
                     />
                 )}
